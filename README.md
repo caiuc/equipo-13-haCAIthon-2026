@@ -1,69 +1,95 @@
-# React + NestJS MVC Base
+# Plataforma Full Stack de Control Semafórico
 
-Estructura base full-stack en un mismo directorio:
+Este repositorio contiene solo la estructura base para un monorepo con:
 
-- `frontend/`: React + Vite
-- `backend/`: NestJS usando JavaScript
+- Frontend en React + Vite.
+- Backend en NestJS con JavaScript.
+- Una carpeta externa para IA en Python/Clingo.
+- Una carpeta externa para simulación en Python.
 
-El backend incluye una separación simple estilo MVC:
+## Estructura base
 
-- `models/`: modelo de datos
-- `controllers/`: endpoints HTTP
-- `services/`: lógica de aplicación
+```text
+frontend/
+	src/
+		pages/
+		components/
+		services/
+		hooks/
+		context/
+		store/
+		visualization/
+backend/
+	src/
+		ia/
+			clingo/
+			modelos/
+			entrenamiento/
+			scripts/
+		simulacion/
+			trafico/
+			vehiculos/
+			buses/
+			paraderos/
+			rutas/
+			telemetria/
+			metricas/
+			percepcion/
+			comunicacion/
+			recompensas/
+		config/
+		database/
+		common/
+		dtos/
+		tests/
+```
 
 ## Requisitos
 
 - Node.js 20+
 - npm 10+
+- PostgreSQL 16+ o compatible
+- Opcional: Docker para levantar la base de datos
 
-## Instalación rápida desde la raíz
+## Variables de entorno
+
+- Copia [/.env.example](.env.example) para variables del frontend.
+- Usa [backend/.env.example](backend/.env.example) como plantilla del backend.
+- El backend debe apuntar a `PYTHON_BIN` y `CLINGO_PATH` para ejecutar la IA y leer su salida por stdout.
+
+## Levantar la base de datos
+
+Ejemplo con Docker:
+
+```bash
+docker run --name control-semaforico-db -e POSTGRES_DB=control_semaforico -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+```
+
+Si usas una instalación local, asegúrate de que `DATABASE_URL` apunte a esa instancia.
+
+## Instalación
+
+Desde la raíz:
 
 ```bash
 npm install
+```
+
+## Ejecución
+
+Levantar ambos proyectos a la vez:
+
+```bash
 npm run dev
 ```
 
-Esto levanta simultáneamente:
-
-- Backend: `http://localhost:3000`
-- Frontend: `http://localhost:5173`
-
-También puedes ejecutarlos por separado.
-
-## Ejecutar backend
+Ejecutar por separado:
 
 ```bash
-cd backend
-npm install
-npm run start:dev
+npm run backend
+npm run frontend
 ```
 
-Backend disponible en:
+La idea es que Nest reciba solicitudes HTTP, ejecute los scripts de `backend/src/ia` o `backend/src/simulacion` y consuma el output generado por esos procesos.
 
-```text
-http://localhost:3000
-```
-
-Endpoint de ejemplo:
-
-```text
-GET http://localhost:3000/api/users
-```
-
-## Ejecutar frontend
-
-En otra terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend disponible normalmente en:
-
-```text
-http://localhost:5173
-```
-
-Vite redirige `/api` hacia `http://localhost:3000` durante desarrollo.
+Por ahora el repositorio solo define la estructura base; no incluye lógica de negocio ni implementación de los módulos.
