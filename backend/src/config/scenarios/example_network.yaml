@@ -1,12 +1,12 @@
 simulation:
   dt_s: 0.2
-  seed: 42
-  camera_roi_m: 60.0
-  traffic_level: medium
+  seed: 140
+  camera_roi_m: 90.0
+  traffic_level: low
   spawn_immediately: true
 
   poisson_rates_per_hour:
-    low: 180
+    low: 200
     medium: 420
     high: 760
 
@@ -52,11 +52,11 @@ rl:
   decision_interval_s: 5.0
 
 reward:
-  vehicle_outflow: 1.0
+  vehicle_outflow: 0.9
   density: -3.0
   waiting: -5.0
 
-  bus_waiting: -10.0
+  bus_waiting: -9.0
 
   headway_deviation: -8.0
   bunching_risk: -25.0
