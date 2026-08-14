@@ -30,6 +30,7 @@ def train(cfg: dict, logic: dict, episodes: int, seconds: float, out_dir: str | 
     group=AgentGroup(env,logic,cfg,seed=base_seed)
     history=[]; out_dir=Path(out_dir); out_dir.mkdir(parents=True,exist_ok=True)
     for ep in range(1,int(episodes)+1):
+        print(f"Episodio {ep}/{episodes}")
         # Cada episodio varía la semilla del entorno (llegadas, dwell, jitter) mientras
         # la red conserva su semilla base; así los 100 episodios no son simulaciones idénticas.
         episode_seed=base_seed+(ep-1)
