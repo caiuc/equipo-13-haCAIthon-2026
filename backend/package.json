@@ -6,7 +6,9 @@
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js",
-    "start:dev": "node --watch src/main.js"
+    "start:dev": "node --watch src/main.js",
+    "python:test": "python3 -m pytest -q",
+    "python:compile": "python3 -m compileall -q src/ia src/simulacion src/config src/common"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

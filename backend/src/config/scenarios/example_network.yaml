@@ -1,0 +1,173 @@
+simulation:
+  dt_s: 0.2
+  seed: 42
+  camera_roi_m: 60.0
+  traffic_level: medium
+  poisson_rates_per_hour:
+    low: 180
+    medium: 420
+    high: 780
+  turn_capacity_vph:
+    straight: 1800
+    left: 1300
+    right: 1300
+
+signals:
+  min_green_s: 10.0
+  yellow_s: 3.0
+  max_red_s: 90.0
+  pedestrian_min_green_s: 7.0
+
+transit:
+  target_headway_s: 360.0
+  critical_headway_s: 180.0
+  risk_headway_s: 240.0
+  imminent_headway_s: 200.0
+  gps_horizon_m: 700.0
+  dwell_min_s: 12.0
+  dwell_max_s: 35.0
+  bus_spawn_jitter_s: 20.0
+
+rl:
+  gamma: 0.99
+  learning_rate: 0.0005
+  batch_size: 64
+  replay_capacity: 50000
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay_steps: 60000
+  target_update_steps: 1000
+  hidden_units: [128, 128]
+  gradient_clip: 10.0
+  decision_interval_s: 5.0
+  agent_architecture: independent  # independent | shared
+
+reward:
+  vehicle_outflow: 0.15
+  congestion: -0.6
+  waiting: -0.25
+  bus_travel: -0.25
+  bus_waiting: -1.3
+  headway_regularity: -2.0
+  headway_deviation: -2.0
+  bunching_risk: -8.0
+  bunching_confirmed: -80.0
+  phase_change: -0.2
+
+nodes:
+  west_src: {x: -420, y: 0, kind: origin}
+  west_dst: {x: -420, y: -8, kind: destination}
+  i1: {x: -120, y: 0, kind: intersection}
+  i2: {x: 120, y: 0, kind: intersection}
+  east_dst: {x: 420, y: 0, kind: destination}
+  east_src: {x: 420, y: 8, kind: origin}
+  north1_src: {x: -120, y: 260, kind: origin}
+  south1_dst: {x: -120, y: -260, kind: destination}
+  south1_src: {x: -120, y: -260, kind: origin}
+  north1_dst: {x: -120, y: 260, kind: destination}
+  north2_src: {x: 120, y: 260, kind: origin}
+  south2_dst: {x: 120, y: -260, kind: destination}
+  south2_src: {x: 120, y: -260, kind: origin}
+  north2_dst: {x: 120, y: 260, kind: destination}
+
+links:
+  w_i1:
+    from: west_src
+    to: i1
+    length_m: 3000
+    speed_limit_mps: 13.9
+    to_branch: west
+  i1_i2:
+    from: i1
+    to: i2
+    length_m: 2400
+    speed_limit_mps: 13.9
+    from_branch: east
+    to_branch: west
+  i2_e:
+    from: i2
+    to: east_dst
+    length_m: 3000
+    speed_limit_mps: 13.9
+    from_branch: east
+  e_i2:
+    from: east_src
+    to: i2
+    length_m: 3000
+    speed_limit_mps: 13.9
+    to_branch: east
+  i2_i1:
+    from: i2
+    to: i1
+    length_m: 2400
+    speed_limit_mps: 13.9
+    from_branch: west
+    to_branch: east
+  i1_w:
+    from: i1
+    to: west_dst
+    length_m: 3000
+    speed_limit_mps: 13.9
+    from_branch: west
+  n1_i1: {from: north1_src, to: i1, length_m: 1000, speed_limit_mps: 11.1, to_branch: north}
+  i1_s1: {from: i1, to: south1_dst, length_m: 1000, speed_limit_mps: 11.1, from_branch: south}
+  s1_i1: {from: south1_src, to: i1, length_m: 1000, speed_limit_mps: 11.1, to_branch: south}
+  i1_n1: {from: i1, to: north1_dst, length_m: 1000, speed_limit_mps: 11.1, from_branch: north}
+  n2_i2: {from: north2_src, to: i2, length_m: 1000, speed_limit_mps: 11.1, to_branch: north}
+  i2_s2: {from: i2, to: south2_dst, length_m: 1000, speed_limit_mps: 11.1, from_branch: south}
+  s2_i2: {from: south2_src, to: i2, length_m: 1000, speed_limit_mps: 11.1, to_branch: south}
+  i2_n2: {from: i2, to: north2_dst, length_m: 1000, speed_limit_mps: 11.1, from_branch: north}
+
+intersections:
+  i1:
+    branches:
+      north: {orientation_deg: 90}
+      east: {orientation_deg: 0}
+      south: {orientation_deg: 270}
+      west: {orientation_deg: 180}
+    incoming_lanes:
+      w_in: {branch: west, allowed_turns: [left, straight, right]}
+      e_in: {branch: east, allowed_turns: [left, straight, right]}
+      n_in: {branch: north, allowed_turns: [left, straight, right]}
+      s_in: {branch: south, allowed_turns: [left, straight, right]}
+    neighbors: [i2]
+  i2:
+    branches:
+      north: {orientation_deg: 90}
+      east: {orientation_deg: 0}
+      south: {orientation_deg: 270}
+      west: {orientation_deg: 180}
+    incoming_lanes:
+      w_in: {branch: west, allowed_turns: [left, straight, right]}
+      e_in: {branch: east, allowed_turns: [left, straight, right]}
+      n_in: {branch: north, allowed_turns: [left, straight, right]}
+      s_in: {branch: south, allowed_turns: [left, straight, right]}
+    neighbors: [i1]
+
+stops:
+  stop_i1_east:
+    link: i1_i2
+    position_m: 850
+    routes: [B1]
+  stop_i2_east:
+    link: i2_e
+    position_m: 950
+    routes: [B1]
+
+bus_routes:
+  B1:
+    links: [w_i1, i1_i2, i2_e]
+    stops: [stop_i1_east, stop_i2_east]
+    headway_s: 360
+    first_departure_s: 20
+    buses: 5
+
+car_od:
+  - {origin: west_src, destination: east_dst, weight: 2.0}
+  - {origin: east_src, destination: west_dst, weight: 1.4}
+  - {origin: north1_src, destination: south1_dst, weight: 1.0}
+  - {origin: south1_src, destination: north1_dst, weight: 1.0}
+  - {origin: north2_src, destination: south2_dst, weight: 1.0}
+  - {origin: south2_src, destination: north2_dst, weight: 1.0}
+  - {origin: west_src, destination: north2_dst, weight: 0.6}
+  - {origin: north1_src, destination: east_dst, weight: 0.6}

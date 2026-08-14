@@ -1,0 +1,6 @@
+clingo>=5.7,<6
+numpy>=2.0,<3
+PyYAML>=6.0,<7
+torch>=2.3
+networkx>=3.3
+pytest>=8.0

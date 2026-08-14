@@ -10,7 +10,9 @@
     "dev": "concurrently -n BACKEND,FRONTEND \"npm run start:dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
     "backend": "npm run start:dev --workspace=backend",
     "frontend": "npm run dev --workspace=frontend",
-    "build": "npm run build --workspace=frontend"
+    "build": "npm run build --workspace=frontend",
+    "test:python": "npm run python:test --workspace=backend",
+    "check:python": "npm run python:compile --workspace=backend"
   },
   "devDependencies": {
     "concurrently": "^9.2.0"

@@ -17,3 +17,14 @@ backend/node_modules/
 frontend/node_modules/
 backend/dist/
 frontend/dist/
+
+# Python / IA runtime
+.venv/
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/outputs/*
+!backend/outputs/.gitkeep
+*:Zone.Identifier
+Zone.Identifier
