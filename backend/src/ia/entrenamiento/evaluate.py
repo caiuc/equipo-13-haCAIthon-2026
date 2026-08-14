@@ -9,9 +9,9 @@ from simulacion.telemetria.snapshot import build_network_snapshot
 from simulacion.trafico.multi_agent_environment import MultiAgentTrafficEnv
 
 
-def evaluate(cfg: dict, logic: dict, seconds: float, checkpoints: str | Path | None = None, metrics_path: str | Path | None = None, max_frames: int = 140):
+def evaluate(cfg: dict, logic: dict, seconds: float, checkpoints: str | Path | None = None, metrics_path: str | Path | None = None, max_frames: int = 140, seed: int | None = None):
     env = MultiAgentTrafficEnv(cfg, logic, seconds)
-    obs = env.reset()
+    obs = env.reset(seed=seed)
     group = None
     if checkpoints:
         candidate = AgentGroup(env, logic, cfg, seed=100)

@@ -9,6 +9,15 @@ from torch import nn
 from ia.modelos.replay_buffer import ReplayBuffer
 
 
+def seed_everything(seed: int) -> None:
+    """Fija las semillas de random/NumPy/PyTorch antes de construir redes."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 class QNetwork(nn.Module):
     def __init__(self, state_dim: int, action_dim: int, hidden: list[int]):
         super().__init__()
@@ -41,9 +50,14 @@ class DQNAgent:
 
     @property
     def epsilon(self) -> float:
-        start,end,decay = float(self.cfg['epsilon_start']),float(self.cfg['epsilon_end']),max(1,int(self.cfg['epsilon_decay_steps']))
-        frac = min(1.0, self.steps/decay)
-        return start + frac*(end-start)
+        start = float(self.cfg['epsilon_start'])
+        end = float(self.cfg['epsilon_end'])
+        warmup = max(0,int(self.cfg.get('epsilon_warmup_steps',0)))
+        decay = max(1,int(self.cfg['epsilon_decay_steps']))
+        if self.steps < warmup:
+            return start
+        progress = min(1.0, max(0.0, (self.steps-warmup)/decay))
+        return start + progress*(end-start)
 
     def select_action(self, state: np.ndarray, mask: list[bool] | np.ndarray, training: bool = True) -> int:
         valid = np.flatnonzero(np.asarray(mask,dtype=bool))
@@ -63,6 +77,9 @@ class DQNAgent:
         self.steps += 1
 
     def learn(self) -> float | None:
+        learning_starts = max(0,int(self.cfg.get('learning_starts_steps',0)))
+        if self.steps < learning_starts:
+            return None
         batch_size = int(self.cfg['batch_size'])
         if len(self.buffer) < batch_size:
             return None

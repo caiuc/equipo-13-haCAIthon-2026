@@ -1,6 +1,6 @@
 const METRICS = [
   { key: 'bunching_events', section: 'public_transport', label: 'Eventos de bunching', suffix: '', lowerIsBetter: true, help: 'Veces que buses del mismo recorrido quedaron peligrosamente juntos.' },
-  { key: 'headways_below_critical_pct', section: 'public_transport', label: 'Headways críticos', suffix: '%', lowerIsBetter: true, help: 'Porcentaje de separaciones bajo el umbral crítico.' },
+  { key: 'critical_headway_pct', section: 'public_transport', label: 'Headways críticos', suffix: '%', lowerIsBetter: true, help: 'Porcentaje de separaciones bajo el umbral crítico.' },
   { key: 'headway_std_s', section: 'public_transport', label: 'Desv. de headway', suffix: ' s', lowerIsBetter: true, help: 'Qué tan irregular es la separación entre buses.' },
   { key: 'mean_headway_s', section: 'public_transport', label: 'Headway promedio', suffix: ' s', help: 'Separación temporal promedio entre buses.' },
   { key: 'mean_travel_time_s', section: 'public_transport', label: 'Viaje medio buses', suffix: ' s', lowerIsBetter: true, help: 'Tiempo promedio de viaje de los buses completados.' },
@@ -10,12 +10,15 @@ const METRICS = [
 ];
 
 function readMetric(metrics, definition) { return metrics?.[definition.section]?.[definition.key]; }
+// null/undefined significa "sin observaciones válidas" (p.ej. ningún bus completó la
+// ruta), no un valor real de cero; se muestra explícitamente como N/D.
 function printable(value) {
-  if (!Number.isFinite(Number(value))) return '—';
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'N/D';
   const number = Number(value);
   return Number.isInteger(number) ? String(number) : number.toFixed(2);
 }
 function comparison(current, baseline, lowerIsBetter) {
+  if (current === null || current === undefined || baseline === null || baseline === undefined) return null;
   if (!Number.isFinite(Number(current)) || !Number.isFinite(Number(baseline))) return null;
   const c = Number(current); const b = Number(baseline);
   if (Math.abs(b) < 1e-9) return { improvement: null };
@@ -57,10 +60,12 @@ function ComparisonBars({ baselineMetrics, currentMetrics }) {
       </div>
       <div className="comparison-rows">
         {rows.map((metric) => {
-          const baseline = Number(readMetric(baselineMetrics, metric) || 0);
-          const current = Number(readMetric(currentMetrics, metric) || 0);
+          const baselineRaw = readMetric(baselineMetrics, metric);
+          const currentRaw = readMetric(currentMetrics, metric);
+          const baseline = Number.isFinite(Number(baselineRaw)) ? Number(baselineRaw) : 0;
+          const current = Number.isFinite(Number(currentRaw)) ? Number(currentRaw) : 0;
           const max = Math.max(Math.abs(baseline), Math.abs(current), 1);
-          const improvement = comparison(current, baseline, metric.lowerIsBetter)?.improvement;
+          const improvement = comparison(currentRaw, baselineRaw, metric.lowerIsBetter)?.improvement;
           return (
             <div className="comparison-row" key={`${metric.section}-${metric.key}`}>
               <div className="comparison-label">
@@ -71,7 +76,7 @@ function ComparisonBars({ baselineMetrics, currentMetrics }) {
                 <div className="comparison-track"><span className="baseline-bar" style={{ width: `${Math.max(2, Math.abs(baseline) / max * 100)}%` }} /></div>
                 <div className="comparison-track"><span className="dqn-bar" style={{ width: `${Math.max(2, Math.abs(current) / max * 100)}%` }} /></div>
               </div>
-              <div className="comparison-values"><span>{printable(baseline)}{metric.suffix}</span><span>{printable(current)}{metric.suffix}</span></div>
+              <div className="comparison-values"><span>{printable(baselineRaw)}{metric.suffix}</span><span>{printable(currentRaw)}{metric.suffix}</span></div>
             </div>
           );
         })}

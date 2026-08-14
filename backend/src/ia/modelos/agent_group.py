@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import numpy as np
 
-from ia.modelos.dqn import DQNAgent
+from ia.modelos.dqn import DQNAgent, seed_everything
 
 
 class AgentGroup:
@@ -16,6 +16,7 @@ class AgentGroup:
     """
     def __init__(self, env, logic: dict, cfg: dict, seed: int = 42):
         self.env=env; self.logic=logic; self.cfg=cfg
+        seed_everything(seed)
         self.architecture=str(cfg['rl'].get('agent_architecture','independent')).lower()
         if self.architecture not in {'independent','shared'}:
             raise ValueError('rl.agent_architecture debe ser independent o shared')

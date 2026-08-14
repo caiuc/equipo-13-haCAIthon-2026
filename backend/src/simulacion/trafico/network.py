@@ -12,10 +12,11 @@ from simulacion.paraderos.stop_manager import StopManager
 
 
 class TrafficNetwork:
-    def __init__(self, cfg: dict, logic: dict | None = None):
+    def __init__(self, cfg: dict, logic: dict | None = None, seed: int | None = None):
         self.cfg = cfg
         self.dt = float(cfg['simulation']['dt_s'])
-        self.rng = random.Random(int(cfg['simulation'].get('seed', 42)))
+        effective_seed = int(seed) if seed is not None else int(cfg['simulation'].get('seed', 42))
+        self.rng = random.Random(effective_seed)
         self.logic = logic or {}
         self.route_planner = RoutePlanner(cfg, self.rng, self.logic)
         self.stop_manager = StopManager(cfg, self.rng, self.dt)

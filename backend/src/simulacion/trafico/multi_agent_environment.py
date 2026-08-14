@@ -21,13 +21,19 @@ class MultiAgentTrafficEnv:
         self.encoders={iid:StateEncoder(lg,cfg) for iid,lg in logic.items()}
         self._build_runtime()
 
-    def _build_runtime(self):
-        self.network=TrafficNetwork(self.cfg,self.logic); self.network.reset()
+    def _build_runtime(self,seed: int | None = None):
+        self.network=TrafficNetwork(self.cfg,self.logic,seed=seed); self.network.reset()
         s=self.cfg['signals']
         effective_min=max(float(s['min_green_s']),float(s.get('pedestrian_min_green_s',0)))
         self.controllers={iid:SignalController(lg,effective_min,s['yellow_s'],s['max_red_s']) for iid,lg in self.logic.items()}
         t=self.cfg['transit']
-        self.headways=HeadwayTracker(t['target_headway_s'],t['critical_headway_s'],t['risk_headway_s'],t['imminent_headway_s'])
+        self.headways=HeadwayTracker(
+            t['target_headway_s'],t['critical_headway_s'],t['risk_headway_s'],t['imminent_headway_s'],
+            position_sample_s=t.get('headway_position_sample_s',1.0),
+            trend_sample_s=t.get('headway_trend_sample_s',5.0),
+            trend_window_s=t.get('headway_trend_window_s',60.0),
+            dangerous_trend_s_per_s=t.get('dangerous_headway_trend_s_per_s',-0.15),
+        )
         self.camera=CameraPerception(self.cfg,self.network); self.gps=GPSPerception(self.cfg,self.network)
         self.messages=MessageBus(self.cfg)
         self.rewards={iid:RewardCalculator(self.cfg,self.headways) for iid in self.logic}
@@ -38,8 +44,8 @@ class MultiAgentTrafficEnv:
         self.last_actions={iid:0 for iid in self.logic}
         self.decision_count=0
 
-    def reset(self):
-        self._build_runtime()
+    def reset(self,seed: int | None = None):
+        self._build_runtime(seed=seed)
         self._update_headways()
         obs=self._observe_and_message()
         self.last_observations=obs
@@ -60,19 +66,22 @@ class MultiAgentTrafficEnv:
         by_route=defaultdict(list)
         for b in self.network.active_buses():
             by_route[b.route_id].append(b)
-        nominal_speed=8.0
+            self.headways.record_progress(b.id,self.network.time_s,self._route_progress(b))
         for rid,buses in by_route.items():
             buses=sorted(buses,key=self._route_progress,reverse=True)
             for i,b in enumerate(buses):
                 leader=buses[i-1] if i>0 else None
                 follower=buses[i+1] if i+1<len(buses) else None
+                # Headway temporal real: separación entre el instante en que el líder
+                # pasó por la posición actual del seguidor y el instante actual. Nunca
+                # se aproxima con distancia/velocidad; si no hay historial suficiente
+                # del líder en esa posición, el headway queda en None.
                 hw=None
                 if leader is not None:
-                    spatial=max(0.0,self._route_progress(leader)-self._route_progress(b))
-                    hw=spatial/nominal_speed
+                    hw=self.headways.temporal_headway(leader.id,self._route_progress(b),self.network.time_s)
                 following_hw=None
                 if follower is not None:
-                    following_hw=max(0.0,self._route_progress(b)-self._route_progress(follower))/nominal_speed
+                    following_hw=self.headways.temporal_headway(b.id,self._route_progress(follower),self.network.time_s)
                 b.metadata['leader_id']=leader.id if leader else None
                 b.metadata['follower_id']=follower.id if follower else None
                 b.metadata['following_headway_s']=following_hw

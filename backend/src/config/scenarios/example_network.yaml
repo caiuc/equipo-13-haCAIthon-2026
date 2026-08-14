@@ -24,14 +24,18 @@ signals:
   pedestrian_min_green_s: 7.0
 
 transit:
-  target_headway_s: 240.0
+  target_headway_s: 360.0
   critical_headway_s: 180.0
-  risk_headway_s: 220.0
-  imminent_headway_s: 195.0
+  risk_headway_s: 240.0
+  imminent_headway_s: 200.0
+  dangerous_headway_trend_s_per_s: -0.15
+  headway_position_sample_s: 1.0
+  headway_trend_sample_s: 5.0
+  headway_trend_window_s: 60.0
   gps_horizon_m: 700.0
-  dwell_min_s: 10.0
-  dwell_max_s: 28.0
-  bus_spawn_jitter_s: 18.0
+  dwell_min_s: 12.0
+  dwell_max_s: 35.0
+  bus_spawn_jitter_s: 60.0
 
 rl:
   gamma: 0.99
@@ -40,12 +44,14 @@ rl:
   replay_capacity: 50000
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 60000
+  epsilon_warmup_steps: 1000
+  epsilon_decay_steps: 26000
+  learning_starts_steps: 1000
   target_update_steps: 1000
   hidden_units: [128, 128]
   gradient_clip: 10.0
   decision_interval_s: 5.0
-  agent_architecture: independent
+  agent_architecture: shared
 
 reward:
   vehicle_outflow: 0.15
@@ -139,22 +145,25 @@ intersections:
     neighbors: [i1]
 
 stops:
+  stop_b1_c: {link: w_i1, position_m: 260, routes: [B1]}
   stop_b1_a: {link: i1_i2, position_m: 120, routes: [B1]}
+  stop_b1_d: {link: i1_i2, position_m: 360, routes: [B1]}
   stop_b1_b: {link: i2_e, position_m: 120, routes: [B1]}
+  stop_b1_e: {link: i2_e, position_m: 260, routes: [B1]}
   stop_b2_b: {link: i2_i1, position_m: 120, routes: [B2]}
   stop_b2_a: {link: i1_w, position_m: 120, routes: [B2]}
 
 bus_routes:
   B1:
     links: [w_i1, i1_i2, i2_e]
-    stops: [stop_b1_a, stop_b1_b]
-    headway_s: 240
+    stops: [stop_b1_c, stop_b1_a, stop_b1_d, stop_b1_b, stop_b1_e]
+    headway_s: 360
     first_departure_s: 0
     buses: 8
   B2:
     links: [e_i2, i2_i1, i1_w]
     stops: [stop_b2_b, stop_b2_a]
-    headway_s: 260
+    headway_s: 360
     first_departure_s: 0
     buses: 7
 

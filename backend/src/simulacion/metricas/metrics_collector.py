@@ -86,12 +86,15 @@ class MetricsCollector:
         travel=[v.finished_at_s-v.created_at_s for v in completed if v.finished_at_s is not None]
         bus_travel=[v.finished_at_s-v.created_at_s for v in completed_buses if v.finished_at_s is not None]
         waits=[v.waiting_time_s for v in completed]
-        headways=[b.headway_s for b in buses if b.headway_s is not None]
+        # Observaciones de headway acumuladas durante TODO el episodio (no solo el estado
+        # final de cada bus), registradas por HeadwayTracker en cada micro-paso.
+        headways=list(env.headways.observations)
+        target=float(self.cfg['transit']['target_headway_s'])
         crit=float(self.cfg['transit']['critical_headway_s'])
         starts=[e for e in env.headways.events if e['type']=='bunching_start']
         ends=[e for e in env.headways.events if e['type']=='bunching_end']
         durations=self._event_durations(env.headways.events)
-        avg_reward={iid:(statistics.fmean(xs) if xs else 0.0) for iid,xs in self.reward_samples.items()}
+        avg_reward={iid:(statistics.fmean(xs) if xs else None) for iid,xs in self.reward_samples.items()}
         active=list(env.network.vehicles.values())
         mean_speed=statistics.fmean([v.speed_mps for v in active]) if active else 0.0
         queue=sum(1 for v in active if v.speed_mps<0.5)
@@ -99,28 +102,33 @@ class MetricsCollector:
         sim_time=max(env.network.time_s,1e-6)
         bus_speeds=[b.speed_mps for b in buses]
         dwell=[s.get('dwell_s',0.0) for b in buses for s in b.metadata.get('visited_stops',[])]
+        headway_mean=statistics.fmean(headways) if headways else None
+        headway_std=statistics.pstdev(headways) if len(headways)>1 else (0.0 if headways else None)
         return {
             'simulation': {'time_s':env.network.time_s,'spawned':env.network.spawned,'completed':len(completed)},
             'public_transport': {
                 'completed_buses':len(completed_buses),
-                'mean_travel_time_s': statistics.fmean(bus_travel) if bus_travel else 0.0,
-                'mean_waiting_time_s': statistics.fmean([b.waiting_time_s for b in buses]) if buses else 0.0,
-                'mean_speed_mps': statistics.fmean(bus_speeds) if bus_speeds else 0.0,
-                'mean_headway_s': statistics.fmean(headways) if headways else 0.0,
-                'headway_std_s': statistics.pstdev(headways) if len(headways)>1 else 0.0,
-                'headway_regularity_cv': ((statistics.pstdev(headways)/statistics.fmean(headways)) if len(headways)>1 and statistics.fmean(headways)>0 else 0.0),
-                'headways_below_critical_pct': (100*sum(h<crit for h in headways)/len(headways)) if headways else 0.0,
+                'mean_travel_time_s': statistics.fmean(bus_travel) if bus_travel else None,
+                'mean_waiting_time_s': statistics.fmean([b.waiting_time_s for b in buses]) if buses else None,
+                'mean_speed_mps': statistics.fmean(bus_speeds) if bus_speeds else None,
+                'mean_headway_s': headway_mean,
+                'headway_std_s': headway_std,
+                'headway_regularity_cv': (headway_std/headway_mean) if headway_mean and headway_std is not None and headway_mean>0 else None,
+                'mean_abs_headway_deviation_s': statistics.fmean(abs(h-target) for h in headways) if headways else None,
+                'min_headway_s': min(headways) if headways else None,
+                'max_headway_s': max(headways) if headways else None,
+                'critical_headway_pct': (100*sum(h<crit for h in headways)/len(headways)) if headways else None,
                 'bunching_events':len(starts),
                 'bunching_recoveries':len(ends),
-                'mean_bunching_duration_s':statistics.fmean(durations) if durations else 0.0,
-                'mean_recovery_time_s':statistics.fmean(durations) if durations else 0.0,
-                'mean_stop_dwell_s':statistics.fmean(dwell) if dwell else 0.0,
+                'mean_bunching_duration_s':statistics.fmean(durations) if durations else None,
+                'mean_recovery_time_s':statistics.fmean(durations) if durations else None,
+                'mean_stop_dwell_s':statistics.fmean(dwell) if dwell else None,
                 'event_log':env.headways.events,
             },
             'general_traffic': {
                 'completed_cars':len(completed_cars),
-                'mean_travel_time_s':statistics.fmean(travel) if travel else 0.0,
-                'mean_waiting_time_s':statistics.fmean(waits) if waits else 0.0,
+                'mean_travel_time_s':statistics.fmean(travel) if travel else None,
+                'mean_waiting_time_s':statistics.fmean(waits) if waits else None,
                 'active_mean_speed_mps':mean_speed,
                 'active_queue_length':queue,
                 'network_density_veh_per_km':len(active)/(total_link_length/1000.0) if total_link_length else 0.0,
