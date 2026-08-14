@@ -4,10 +4,12 @@ simulation:
   camera_roi_m: 60.0
   traffic_level: medium
   spawn_immediately: true
+
   poisson_rates_per_hour:
     low: 180
     medium: 420
     high: 760
+
   minimum_vehicle_gap_m: 2.5
   intersection_half_size_m: 12.0
   vehicle_remove_margin_m: 0.5
@@ -21,21 +23,31 @@ transit:
   target_headway_s: 50.0
   critical_headway_s: 25.0
   risk_headway_s: 35.0
+
   gps_horizon_m: 420.0
+
   dwell_min_s: 4.0
   dwell_max_s: 12.0
+
   bus_nominal_speed_mps: 10.0
 
 rl:
   gamma: 0.97
   learning_rate: 0.001
+
   batch_size: 64
   replay_capacity: 50000
+
   epsilon_start: 1.0
   epsilon_end: 0.05
   epsilon_decay_steps: 20000
+
   target_update_steps: 500
-  hidden_units: [128, 128]
+
+  hidden_units:
+    - 128
+    - 128
+
   gradient_clip: 10.0
   decision_interval_s: 5.0
 
@@ -43,103 +55,496 @@ reward:
   vehicle_outflow: 1.0
   density: -3.0
   waiting: -5.0
+
   bus_waiting: -10.0
+
   headway_deviation: -8.0
   bunching_risk: -25.0
   bunching_confirmed: -120.0
+
   phase_change: -1.5
 
-# Coordenadas en metros para que la misma geometría alimente simulación y render.
+
+# ============================================================
+# NODOS
+# ============================================================
+
 nodes:
-  west_src:   {x: -350, y: 0, kind: origin}
-  i1:         {x: -130, y: 0, kind: intersection}
-  i2:         {x: 130, y: 0, kind: intersection}
-  east_dst:   {x: 350, y: 0, kind: destination}
-  east_src:   {x: 350, y: 0, kind: origin}
-  west_dst:   {x: -350, y: 0, kind: destination}
 
-  north1_src: {x: -130, y: -190, kind: origin}
-  south1_dst: {x: -130, y: 190, kind: destination}
-  south1_src: {x: -130, y: 190, kind: origin}
-  north1_dst: {x: -130, y: -190, kind: destination}
+  # Avenida principal
+  west_src:
+    x: -350
+    y: 0
+    kind: origin
 
-  north2_src: {x: 130, y: -190, kind: origin}
-  south2_dst: {x: 130, y: 190, kind: destination}
-  south2_src: {x: 130, y: 190, kind: origin}
-  north2_dst: {x: 130, y: -190, kind: destination}
+  i1:
+    x: -130
+    y: 0
+    kind: intersection
 
-# Cada link es un carril dirigido. Los pares opuestos forman las dos pistas visibles.
+  i2:
+    x: 130
+    y: 0
+    kind: intersection
+
+  east_dst:
+    x: 350
+    y: 0
+    kind: destination
+
+
+  east_src:
+    x: 350
+    y: 0
+    kind: origin
+
+  west_dst:
+    x: -350
+    y: 0
+    kind: destination
+
+
+  # Cruce A
+  north1_src:
+    x: -130
+    y: -190
+    kind: origin
+
+  south1_dst:
+    x: -130
+    y: 190
+    kind: destination
+
+  south1_src:
+    x: -130
+    y: 190
+    kind: origin
+
+  north1_dst:
+    x: -130
+    y: -190
+    kind: destination
+
+
+  # Cruce B
+  north2_src:
+    x: 130
+    y: -190
+    kind: origin
+
+  south2_dst:
+    x: 130
+    y: 190
+    kind: destination
+
+  south2_src:
+    x: 130
+    y: 190
+    kind: origin
+
+  north2_dst:
+    x: 130
+    y: -190
+    kind: destination
+
+
+# ============================================================
+# LINKS
+#
+# Cada link representa una pista en una dirección.
+#
+# B1:
+# Oeste -> Cruce A -> Cruce B -> Este
+#
+# B2:
+# Este -> Cruce B -> Cruce A -> Oeste
+# ============================================================
+
 links:
-  w_i1:  {from: west_src, to: i1, length_m: 220, speed_limit_mps: 13.9, to_branch: west}
-  i1_w:  {from: i1, to: west_dst, length_m: 220, speed_limit_mps: 13.9, from_branch: west}
-  i1_i2: {from: i1, to: i2, length_m: 260, speed_limit_mps: 13.9, from_branch: east, to_branch: west}
-  i2_i1: {from: i2, to: i1, length_m: 260, speed_limit_mps: 13.9, from_branch: west, to_branch: east}
-  i2_e:  {from: i2, to: east_dst, length_m: 220, speed_limit_mps: 13.9, from_branch: east}
-  e_i2:  {from: east_src, to: i2, length_m: 220, speed_limit_mps: 13.9, to_branch: east}
 
-  n1_i1: {from: north1_src, to: i1, length_m: 190, speed_limit_mps: 11.1, to_branch: north}
-  i1_s1: {from: i1, to: south1_dst, length_m: 190, speed_limit_mps: 11.1, from_branch: south}
-  s1_i1: {from: south1_src, to: i1, length_m: 190, speed_limit_mps: 11.1, to_branch: south}
-  i1_n1: {from: i1, to: north1_dst, length_m: 190, speed_limit_mps: 11.1, from_branch: north}
+  # ----------------------------------------------------------
+  # Avenida principal - Oeste -> Este
+  # ----------------------------------------------------------
 
-  n2_i2: {from: north2_src, to: i2, length_m: 190, speed_limit_mps: 11.1, to_branch: north}
-  i2_s2: {from: i2, to: south2_dst, length_m: 190, speed_limit_mps: 11.1, from_branch: south}
-  s2_i2: {from: south2_src, to: i2, length_m: 190, speed_limit_mps: 11.1, to_branch: south}
-  i2_n2: {from: i2, to: north2_dst, length_m: 190, speed_limit_mps: 11.1, from_branch: north}
+  w_i1:
+    from: west_src
+    to: i1
+    length_m: 220
+    speed_limit_mps: 13.9
+    to_branch: west
+
+  i1_i2:
+    from: i1
+    to: i2
+    length_m: 260
+    speed_limit_mps: 13.9
+    from_branch: east
+    to_branch: west
+
+  i2_e:
+    from: i2
+    to: east_dst
+    length_m: 220
+    speed_limit_mps: 13.9
+    from_branch: east
+
+
+  # ----------------------------------------------------------
+  # Avenida principal - Este -> Oeste
+  # ----------------------------------------------------------
+
+  e_i2:
+    from: east_src
+    to: i2
+    length_m: 220
+    speed_limit_mps: 13.9
+    to_branch: east
+
+  i2_i1:
+    from: i2
+    to: i1
+    length_m: 260
+    speed_limit_mps: 13.9
+    from_branch: west
+    to_branch: east
+
+  i1_w:
+    from: i1
+    to: west_dst
+    length_m: 220
+    speed_limit_mps: 13.9
+    from_branch: west
+
+
+  # ----------------------------------------------------------
+  # Cruce A - Norte / Sur
+  # ----------------------------------------------------------
+
+  n1_i1:
+    from: north1_src
+    to: i1
+    length_m: 190
+    speed_limit_mps: 11.1
+    to_branch: north
+
+  i1_s1:
+    from: i1
+    to: south1_dst
+    length_m: 190
+    speed_limit_mps: 11.1
+    from_branch: south
+
+  s1_i1:
+    from: south1_src
+    to: i1
+    length_m: 190
+    speed_limit_mps: 11.1
+    to_branch: south
+
+  i1_n1:
+    from: i1
+    to: north1_dst
+    length_m: 190
+    speed_limit_mps: 11.1
+    from_branch: north
+
+
+  # ----------------------------------------------------------
+  # Cruce B - Norte / Sur
+  # ----------------------------------------------------------
+
+  n2_i2:
+    from: north2_src
+    to: i2
+    length_m: 190
+    speed_limit_mps: 11.1
+    to_branch: north
+
+  i2_s2:
+    from: i2
+    to: south2_dst
+    length_m: 190
+    speed_limit_mps: 11.1
+    from_branch: south
+
+  s2_i2:
+    from: south2_src
+    to: i2
+    length_m: 190
+    speed_limit_mps: 11.1
+    to_branch: south
+
+  i2_n2:
+    from: i2
+    to: north2_dst
+    length_m: 190
+    speed_limit_mps: 11.1
+    from_branch: north
+
+
+# ============================================================
+# INTERSECCIONES
+# ============================================================
 
 intersections:
+
   i1:
     label: Cruce A
+
     branches:
-      north: {orientation_deg: 90}
-      east:  {orientation_deg: 0}
-      south: {orientation_deg: 270}
-      west:  {orientation_deg: 180}
+
+      north:
+        orientation_deg: 90
+
+      east:
+        orientation_deg: 0
+
+      south:
+        orientation_deg: 270
+
+      west:
+        orientation_deg: 180
+
     incoming_lanes:
-      north_in: {branch: north, allowed_turns: [straight]}
-      east_in:  {branch: east, allowed_turns: [straight]}
-      south_in: {branch: south, allowed_turns: [straight]}
-      west_in:  {branch: west, allowed_turns: [straight]}
-    neighbors: [i2]
+
+      north_in:
+        branch: north
+        allowed_turns:
+          - straight
+
+      east_in:
+        branch: east
+        allowed_turns:
+          - straight
+
+      south_in:
+        branch: south
+        allowed_turns:
+          - straight
+
+      west_in:
+        branch: west
+        allowed_turns:
+          - straight
+
+    neighbors:
+      - i2
+
+
   i2:
     label: Cruce B
-    branches:
-      north: {orientation_deg: 90}
-      east:  {orientation_deg: 0}
-      south: {orientation_deg: 270}
-      west:  {orientation_deg: 180}
-    incoming_lanes:
-      north_in: {branch: north, allowed_turns: [straight]}
-      east_in:  {branch: east, allowed_turns: [straight]}
-      south_in: {branch: south, allowed_turns: [straight]}
-      west_in:  {branch: west, allowed_turns: [straight]}
-    neighbors: [i1]
 
-# Paraderos sobre la avenida principal. La variabilidad del dwell genera irregularidad.
+    branches:
+
+      north:
+        orientation_deg: 90
+
+      east:
+        orientation_deg: 0
+
+      south:
+        orientation_deg: 270
+
+      west:
+        orientation_deg: 180
+
+    incoming_lanes:
+
+      north_in:
+        branch: north
+        allowed_turns:
+          - straight
+
+      east_in:
+        branch: east
+        allowed_turns:
+          - straight
+
+      south_in:
+        branch: south
+        allowed_turns:
+          - straight
+
+      west_in:
+        branch: west
+        allowed_turns:
+          - straight
+
+    neighbors:
+      - i1
+
+
+# ============================================================
+# PARADEROS
+#
+# 6 PARADEROS EN TOTAL
+#
+# B1: 3 paraderos Oeste -> Este
+#
+#   P1 -> Cruce A -> P2 -> Cruce B -> P3
+#
+# B2: 3 paraderos Este -> Oeste
+#
+#   P4 -> Cruce B -> P5 -> Cruce A -> P6
+#
+# ============================================================
+
 stops:
-  b1_between: {link: i1_i2, position_m: 125, routes: [B1]}
-  b1_east:    {link: i2_e, position_m: 90, routes: [B1]}
-  b2_between: {link: i2_i1, position_m: 125, routes: [B2]}
-  b2_west:    {link: i1_w, position_m: 90, routes: [B2]}
+
+  # ----------------------------------------------------------
+  # Recorrido B1 - Oeste -> Este
+  # ----------------------------------------------------------
+
+  b1_west:
+    name: Paradero B1 Oeste
+    link: w_i1
+    position_m: 90
+    routes:
+      - B1
+
+  b1_between:
+    name: Paradero B1 Central
+    link: i1_i2
+    position_m: 125
+    routes:
+      - B1
+
+  b1_east:
+    name: Paradero B1 Este
+    link: i2_e
+    position_m: 90
+    routes:
+      - B1
+
+
+  # ----------------------------------------------------------
+  # Recorrido B2 - Este -> Oeste
+  # ----------------------------------------------------------
+
+  b2_east:
+    name: Paradero B2 Este
+    link: e_i2
+    position_m: 90
+    routes:
+      - B2
+
+  b2_between:
+    name: Paradero B2 Central
+    link: i2_i1
+    position_m: 125
+    routes:
+      - B2
+
+  b2_west:
+    name: Paradero B2 Oeste
+    link: i1_w
+    position_m: 90
+    routes:
+      - B2
+
+
+# ============================================================
+# RECORRIDOS DE MICROS
+# ============================================================
 
 bus_routes:
+
+  # ----------------------------------------------------------
+  # B1
+  #
+  # Oeste
+  #   ↓
+  # Paradero 1
+  #   ↓
+  # Cruce A
+  #   ↓
+  # Paradero 2
+  #   ↓
+  # Cruce B
+  #   ↓
+  # Paradero 3
+  #   ↓
+  # Este
+  # ----------------------------------------------------------
+
   B1:
-    links: [w_i1, i1_i2, i2_e]
-    stops: [b1_between, b1_east]
-    headway_s: 50
-    first_departure_s: 0
-    buses: 8
-  B2:
-    links: [e_i2, i2_i1, i1_w]
-    stops: [b2_between, b2_west]
+
+    links:
+      - w_i1
+      - i1_i2
+      - i2_e
+
+    stops:
+      - b1_west
+      - b1_between
+      - b1_east
+
     headway_s: 50
     first_departure_s: 0
     buses: 8
 
+
+  # ----------------------------------------------------------
+  # B2
+  #
+  # Este
+  #   ↓
+  # Paradero 1
+  #   ↓
+  # Cruce B
+  #   ↓
+  # Paradero 2
+  #   ↓
+  # Cruce A
+  #   ↓
+  # Paradero 3
+  #   ↓
+  # Oeste
+  # ----------------------------------------------------------
+
+  B2:
+
+    links:
+      - e_i2
+      - i2_i1
+      - i1_w
+
+    stops:
+      - b2_east
+      - b2_between
+      - b2_west
+
+    headway_s: 50
+    first_departure_s: 0
+    buses: 8
+
+
+# ============================================================
+# ORIGEN / DESTINO DE AUTOMÓVILES
+# ============================================================
+
 car_od:
-  - {origin: west_src, destination: east_dst, weight: 1.8}
-  - {origin: east_src, destination: west_dst, weight: 1.8}
-  - {origin: north1_src, destination: south1_dst, weight: 1.0}
-  - {origin: south1_src, destination: north1_dst, weight: 1.0}
-  - {origin: north2_src, destination: south2_dst, weight: 1.0}
-  - {origin: south2_src, destination: north2_dst, weight: 1.0}
+
+  - origin: west_src
+    destination: east_dst
+    weight: 1.8
+
+  - origin: east_src
+    destination: west_dst
+    weight: 1.8
+
+  - origin: north1_src
+    destination: south1_dst
+    weight: 1.0
+
+  - origin: south1_src
+    destination: north1_dst
+    weight: 1.0
+
+  - origin: north2_src
+    destination: south2_dst
+    weight: 1.0
+
+  - origin: south2_src
+    destination: north2_dst
+    weight: 1.0
