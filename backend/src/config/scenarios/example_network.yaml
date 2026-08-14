@@ -92,7 +92,6 @@ nodes:
     y: 0
     kind: destination
 
-
   east_src:
     x: 350
     y: 0
@@ -150,14 +149,6 @@ nodes:
 
 # ============================================================
 # LINKS
-#
-# Cada link representa una pista en una dirección.
-#
-# B1:
-# Oeste -> Cruce A -> Cruce B -> Este
-#
-# B2:
-# Este -> Cruce B -> Cruce A -> Oeste
 # ============================================================
 
 links:
@@ -377,22 +368,19 @@ intersections:
 # ============================================================
 # PARADEROS
 #
-# 6 PARADEROS EN TOTAL
+# 6 EN TOTAL
 #
-# B1: 3 paraderos Oeste -> Este
+# B1:
+# Oeste -> P1 -> Cruce A -> P2 -> Cruce B -> P3 -> Este
 #
-#   P1 -> Cruce A -> P2 -> Cruce B -> P3
-#
-# B2: 3 paraderos Este -> Oeste
-#
-#   P4 -> Cruce B -> P5 -> Cruce A -> P6
-#
+# B2:
+# Este -> P4 -> Cruce B -> P5 -> Cruce A -> P6 -> Oeste
 # ============================================================
 
 stops:
 
   # ----------------------------------------------------------
-  # Recorrido B1 - Oeste -> Este
+  # B1 - Oeste -> Este
   # ----------------------------------------------------------
 
   b1_west:
@@ -418,7 +406,7 @@ stops:
 
 
   # ----------------------------------------------------------
-  # Recorrido B2 - Este -> Oeste
+  # B2 - Este -> Oeste
   # ----------------------------------------------------------
 
   b2_east:
@@ -449,26 +437,7 @@ stops:
 
 bus_routes:
 
-  # ----------------------------------------------------------
-  # B1
-  #
-  # Oeste
-  #   ↓
-  # Paradero 1
-  #   ↓
-  # Cruce A
-  #   ↓
-  # Paradero 2
-  #   ↓
-  # Cruce B
-  #   ↓
-  # Paradero 3
-  #   ↓
-  # Este
-  # ----------------------------------------------------------
-
   B1:
-
     links:
       - w_i1
       - i1_i2
@@ -484,26 +453,7 @@ bus_routes:
     buses: 8
 
 
-  # ----------------------------------------------------------
-  # B2
-  #
-  # Este
-  #   ↓
-  # Paradero 1
-  #   ↓
-  # Cruce B
-  #   ↓
-  # Paradero 2
-  #   ↓
-  # Cruce A
-  #   ↓
-  # Paradero 3
-  #   ↓
-  # Oeste
-  # ----------------------------------------------------------
-
   B2:
-
     links:
       - e_i2
       - i2_i1
@@ -521,9 +471,24 @@ bus_routes:
 
 # ============================================================
 # ORIGEN / DESTINO DE AUTOMÓVILES
+#
+# Distribución aproximada:
+#
+# Avenida principal:
+#   67 %
+#
+# Calles verticales:
+#   33 %
+#
+# Las calles verticales mantienen demanda suficiente para que
+# los agentes deban atenderlas, pero dejan de dominar el tráfico.
 # ============================================================
 
 car_od:
+
+  # ----------------------------------------------------------
+  # AVENIDA PRINCIPAL
+  # ----------------------------------------------------------
 
   - origin: west_src
     destination: east_dst
@@ -533,18 +498,30 @@ car_od:
     destination: west_dst
     weight: 1.8
 
+
+  # ----------------------------------------------------------
+  # CRUCE A - VERTICAL
+  # Demanda reducida
+  # ----------------------------------------------------------
+
   - origin: north1_src
     destination: south1_dst
-    weight: 1.0
+    weight: 0.45
 
   - origin: south1_src
     destination: north1_dst
-    weight: 1.0
+    weight: 0.45
+
+
+  # ----------------------------------------------------------
+  # CRUCE B - VERTICAL
+  # Demanda reducida
+  # ----------------------------------------------------------
 
   - origin: north2_src
     destination: south2_dst
-    weight: 1.0
+    weight: 0.45
 
   - origin: south2_src
     destination: north2_dst
-    weight: 1.0
+    weight: 0.45
