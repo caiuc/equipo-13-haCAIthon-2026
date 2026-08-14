@@ -134,3 +134,91 @@ Salida correcta por `stdout`:
 ```
 
 Los logs se escriben a `stderr`. NestJS mantiene una allowlist de operaciones y usa `spawn()` con argumentos separados.
+
+## Simulación DQN continua para la demo de dos cruces
+
+La demo interactiva incorpora una segunda modalidad de ejecución además de los jobs finitos.
+
+```text
+React
+  │ POST /api/traffic/live
+  ▼
+TrafficController
+  ▼
+TrafficLiveService
+  ▼
+PythonProcessService.startLiveSimulation()
+  ▼
+live_simulation.py
+  │
+  ├─ carga escenario
+  ├─ ejecuta Clingo
+  ├─ carga checkpoint DQN
+  ├─ crea MultiAgentTrafficEnv
+  ├─ selecciona acciones DQN
+  ├─ aplica action masking + SignalController
+  ├─ emite frame NDJSON
+  └─ al terminar ciclo: nueva semilla y reset
+```
+
+`TrafficLiveService` mantiene únicamente el último snapshot, métricas recientes y una ventana corta de decisiones. No acumula la simulación completa en memoria.
+
+El proceso termina mediante `SIGTERM` cuando React solicita `POST /api/traffic/live/:sessionId/stop`.
+
+### Archivo Clingo desde frontend
+
+El texto `.lp` se transporta dentro del contrato JSON como `clingoProgram` y se añade a `rules.lp`. Antes de llegar a Clingo se valida tamaño y se bloquean `#script` y `#include`. Por tanto el navegador no entrega rutas de archivos al backend y NestJS no ejecuta comandos construidos por el usuario.
+
+### Semáforos visuales
+
+Python expone por intersección:
+
+```json
+{
+  "phaseIndex": 0,
+  "selectedPhase": 1,
+  "mode": "YELLOW",
+  "branchSignals": {
+    "north": "RED",
+    "east": "YELLOW",
+    "south": "RED",
+    "west": "YELLOW"
+  }
+}
+```
+
+React únicamente representa este estado. No calcula legalidad ni decide colores por su cuenta.
+
+## Simulación live en tiempo real
+
+La ruta live separa dos escalas temporales:
+
+```text
+DQN decision_interval_s = 5,0 s
+            ↓
+begin_decision(action)
+            ↓
+25 × advance_micro_step(dt=0,2 s)
+            ↓
+finish_decision()
+```
+
+Cada `advance_micro_step` produce un snapshot real. `live_simulation.py` sincroniza ese reloj con `time.monotonic()`; a `realTimeFactor=1`, `0,2 s` simulados se presentan aproximadamente cada `0,2 s` reales.
+
+El transporte hacia React utiliza SSE:
+
+```text
+Python NDJSON stdout
+      ↓
+PythonProcessService
+      ↓
+TrafficLiveService
+      ↓
+GET /api/traffic/live/:sessionId/stream
+      ↓  text/event-stream
+EventSource (React)
+      ↓
+NetworkVisualization
+```
+
+El stream no modifica la lógica científica: NestJS solo retransmite telemetría y el frontend únicamente dibuja el estado recibido.

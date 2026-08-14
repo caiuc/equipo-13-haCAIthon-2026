@@ -1,60 +1,58 @@
 # Equipo 13 haCAIthon 2026 — Control semafórico multiagente
 
-Monorepo para simulación y control semafórico adaptativo orientado prioritariamente a la regularidad del transporte público y prevención de **bus bunching**.
+Demo de control semafórico adaptativo para **dos intersecciones de cuatro vías conectadas**, orientada prioritariamente a buses, regularidad de headway y prevención de **bus bunching**.
 
-La solución integra:
+La aplicación integra React + Vite, NestJS, Python, Clingo/ASP y DQN multiagente.
 
-- React + Vite para configuración, visualización y métricas.
-- NestJS en JavaScript para API, validación, jobs y ejecución segura de Python.
-- Python para simulación microscópica, percepción, comunicación, métricas y RL.
-- Clingo/ASP como fuente formal de verdad para movimientos, conflictos y fases legales.
-- DQN multiagente con replay buffer, target network, Huber loss, Adam, epsilon-greedy, gradient clipping y action masking.
+## Flujo principal de la demo
 
-## Estructura
+La interfaz está pensada para funcionar en tres pasos:
+
+1. **Clingo** — cargar opcionalmente un archivo `.lp` y validar movimientos, conflictos y fases legales.
+2. **Entrenar DQN** — elegir cantidad de episodios y segundos simulados por episodio.
+3. **Simulación DQN continua en tiempo real** — cargar automáticamente el checkpoint recién entrenado y observar decisiones, semáforos y vehículos hasta pulsar `Detener simulación`.
+
+La simulación continua ejecuta Python realmente. El motor avanza con `dt=0,2 s`; a velocidad `1×`, cada micro-paso se sincroniza con el reloj real y se transmite inmediatamente al navegador mediante **Server-Sent Events (SSE)**. El DQN sigue tomando decisiones cada `5 s` simulados, igual que durante el entrenamiento. Al terminar cada ciclo de tráfico reinicia el entorno con una semilla diferente, mantiene el mismo checkpoint entrenado y continúa indefinidamente.
+
+## Qué se visualiza
+
+- Dos cruces de cuatro vías conectados por una avenida principal.
+- Dos pistas por sentido.
+- Cuatro cabezales semafóricos visibles por cruce (8 en total).
+- Rojo, amarillo y verde de cada aproximación actualizados frame a frame; un amarillo de 3 s permanece visible durante aproximadamente 15 frames a `dt=0,2 s`.
+- Fase solicitada por el DQN y fase actualmente aplicada.
+- Transición amarilla obligatoria antes de cambiar a una fase incompatible.
+- Autos y buses orientados en su sentido de circulación.
+- Recorridos B1 y B2 en sentidos opuestos.
+- Paraderos.
+- Movimientos activos dentro del cruce.
+- Headway, estado de buses, recompensas y últimas decisiones DQN.
+
+## Seguridad al cargar Clingo
+
+El archivo `.lp` seleccionado desde el navegador se **agrega** al núcleo `backend/src/ia/clingo/rules.lp`.
+
+Se permiten reglas, hechos, restricciones y optimizaciones ASP normales. Por seguridad:
+
+- máximo 200 KB;
+- `#script` está bloqueado;
+- `#include` está bloqueado.
+
+Esto evita ejecutar código embebido o leer archivos arbitrarios del servidor.
+
+Se incluye un ejemplo en:
 
 ```text
-frontend/src/
-├── components/
-├── hooks/
-├── pages/
-├── services/
-└── visualization/
-
-backend/src/
-├── ia/
-│   ├── clingo/
-│   ├── modelos/
-│   ├── entrenamiento/
-│   └── scripts/
-├── simulacion/
-│   ├── trafico/
-│   ├── vehiculos/
-│   ├── buses/
-│   ├── paraderos/
-│   ├── rutas/
-│   ├── telemetria/
-│   ├── metricas/
-│   ├── percepcion/
-│   ├── comunicacion/
-│   └── recompensas/
-├── config/
-├── common/
-├── dtos/
-├── controllers/
-├── services/
-└── tests/
+backend/src/ia/clingo/demo_two_crosses.lp
 ```
 
 ## Requisitos
 
 - Node.js 20+
 - npm 10+
-- Python 3.11+ (Python 3.12 funciona)
-- Clingo instalado mediante el paquete Python de `requirements.txt`
+- Python 3.11+
 
-## 1. Instalar dependencias Python
-
-En Ubuntu/Debian, desde la raíz del repositorio:
+## Instalación Python
 
 ```bash
 cd backend
@@ -62,84 +60,69 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
+cd ..
 ```
 
-Validar:
-
-```bash
-python -m pytest -q
-python -m compileall -q src/ia src/simulacion src/config src/common
-```
-
-## 2. Probar el núcleo Python directamente
-
-Con el entorno virtual activo y estando en `backend/`:
-
-```bash
-PYTHONPATH=src python src/ia/scripts/dev_cli.py scenarios
-PYTHONPATH=src python src/ia/scripts/dev_cli.py topology
-PYTHONPATH=src python src/ia/scripts/dev_cli.py simulate --seconds 300
-```
-
-Entrenamiento corto:
-
-```bash
-PYTHONPATH=src python src/ia/scripts/dev_cli.py train \
-  --episodes 10 \
-  --seconds 600 \
-  --run-id prueba-dqn
-```
-
-Evaluación del checkpoint:
-
-```bash
-PYTHONPATH=src python src/ia/scripts/dev_cli.py evaluate \
-  --seconds 900 \
-  --checkpoint-run-id prueba-dqn
-```
-
-Los modelos se almacenan bajo `backend/outputs/model_runs/<run-id>/` y están excluidos de Git.
-
-## 3. Instalar frontend y backend NestJS
-
-Desde la raíz:
+## Instalación Node
 
 ```bash
 npm install
 ```
 
-Si tu sistema solo expone `python3`, no necesitas instalar `python-is-python3`: el backend usa `python3` por defecto.
+## Levantar aplicación
 
-Para personalizar variables:
-
-```bash
-cp backend/.env.example backend/.env
-```
-
-Las variables principales son:
-
-```text
-PORT
-PYTHON_BIN
-PYTHON_TIMEOUT_MS
-PYTHON_TRAIN_TIMEOUT_MS
-```
-
-## 4. Levantar la aplicación
-
-Desde la raíz:
+Desde la raíz, manteniendo el entorno virtual activo:
 
 ```bash
 npm run dev
 ```
 
-- Frontend: `http://localhost:5173`
-- Backend: `http://localhost:3000`
-- Health: `GET /api/health`
+Luego abre:
 
-Vite proxifica `/api` al backend durante desarrollo.
+```text
+http://localhost:5173
+```
 
-## API de control semafórico
+Backend:
+
+```text
+http://localhost:3000
+```
+
+## Prueba rápida recomendada
+
+En la interfaz:
+
+```text
+Clingo:       rules.lp interno o demo_two_crosses.lp
+Episodios:    3
+Por episodio: 120 segundos
+Ciclo live:   600 segundos
+Ritmo:        1× · tiempo real
+```
+
+Flujo:
+
+```text
+Validar topología Clingo
+        ↓
+Entrenar DQN
+        ↓
+Iniciar simulación con el modelo entrenado
+        ↓
+Observar fases, rojo/amarillo/verde, autos y buses
+        ↓
+Detener simulación cuando quieras
+```
+
+Para un entrenamiento más representativo:
+
+```text
+10 episodios × 300 s   → demo
+50 episodios × 900 s   → entrenamiento más serio
+```
+
+## API
 
 ```text
 GET  /api/traffic/scenarios
@@ -149,33 +132,53 @@ POST /api/traffic/training
 POST /api/traffic/evaluations
 GET  /api/traffic/jobs/:jobId
 GET  /api/traffic/jobs/:jobId/results
+
+POST /api/traffic/live
+GET  /api/traffic/live/:sessionId
+GET  /api/traffic/live/:sessionId/stream   # SSE en tiempo real
+POST /api/traffic/live/:sessionId/stop
 ```
 
-Simulación, entrenamiento y evaluación son trabajos. El POST devuelve un `jobId`; el frontend consulta su estado hasta `completed` o `failed`.
+Los entrenamientos son jobs finitos. La simulación `live` mantiene un proceso Python activo hasta detenerlo.
 
-## Seguridad del control
-
-El sistema mantiene una separación absoluta entre:
+## Separación de seguridad
 
 ```text
-lo que el DQN quiere hacer
+Clingo
+  ↓
+fases legalmente posibles
+  ↓
+action masking
+  ↓
+DQN selecciona fase
+  ↓
+controlador temporal
+  ↓
+verde mínimo / amarillo obligatorio / rojo máximo
+  ↓
+simulador microscópico
 ```
 
-y:
+El DQN nunca produce directamente una combinación arbitraria de luces.
+
+## Tests
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+Los checkpoints se guardan en:
 
 ```text
-lo que el sistema permite hacer
+backend/outputs/model_runs/<run-id>/
 ```
 
-Clingo define movimientos/conflictos/fases legales. El controlador temporal aplica mínimo verde, amarillo y rojo máximo. El action masking elimina acciones no válidas antes de que el DQN seleccione una fase.
+y están excluidos del repositorio mediante `.gitignore`.
 
-## Prioridad de optimización
+### Simulación visual en tiempo real
 
-1. Seguridad.
-2. Prevención de bus bunching.
-3. Regularidad del transporte público.
-4. Tiempo de viaje de buses.
-5. Espera de buses.
-6. Flujo vehicular general.
+Al pulsar **Iniciar simulación en tiempo real**, Python avanza el modelo microscópico cada `0.2 s` y NestJS transmite cada frame mediante SSE. React actualiza posiciones y cabezales semafóricos con cada frame. En desarrollo existe un respaldo automático que consulta el último snapshot real cada `250 ms` si el stream SSE queda sin eventos por más de `900 ms`.
 
-Consulta `docs/ARCHITECTURE.md` y `docs/REQUIREMENTS_TRACEABILITY.md` para el detalle técnico.
+El escenario de demostración inicia con tráfico visible desde el primer micro-paso: un auto por origen y un bus B1/B2 desde `t=0`. Los cambios de fase respetan mínimo verde, amarillo obligatorio y máximo de rojo, de modo que la secuencia de colores sea observable durante la demo.

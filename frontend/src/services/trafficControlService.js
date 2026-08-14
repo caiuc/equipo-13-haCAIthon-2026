@@ -8,7 +8,6 @@ async function request(path, options = {}) {
     },
     ...options,
   });
-
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.success === false) {
     throw new Error(payload?.error?.message || `Error HTTP ${response.status}`);
@@ -22,33 +21,40 @@ export async function getScenarios() {
 }
 
 export async function getTopology(parameters) {
-  return request('/traffic/topology', {
-    method: 'POST',
-    body: JSON.stringify(parameters),
-  });
+  return request('/traffic/topology', { method: 'POST', body: JSON.stringify(parameters) });
 }
 
 export async function startSimulation(parameters) {
-  const response = await request('/traffic/simulations', {
-    method: 'POST',
-    body: JSON.stringify(parameters),
-  });
+  const response = await request('/traffic/simulations', { method: 'POST', body: JSON.stringify(parameters) });
   return response.data;
 }
 
 export async function startTraining(parameters) {
-  const response = await request('/traffic/training', {
-    method: 'POST',
-    body: JSON.stringify(parameters),
-  });
+  const response = await request('/traffic/training', { method: 'POST', body: JSON.stringify(parameters) });
   return response.data;
 }
 
 export async function startEvaluation(parameters) {
-  const response = await request('/traffic/evaluations', {
-    method: 'POST',
-    body: JSON.stringify(parameters),
-  });
+  const response = await request('/traffic/evaluations', { method: 'POST', body: JSON.stringify(parameters) });
+  return response.data;
+}
+
+export async function startLiveSimulation(parameters) {
+  const response = await request('/traffic/live', { method: 'POST', body: JSON.stringify(parameters) });
+  return response.data;
+}
+
+export function liveSimulationStreamUrl(sessionId) {
+  return `${API_BASE}/traffic/live/${encodeURIComponent(sessionId)}/stream`;
+}
+
+export async function getLiveSimulation(sessionId) {
+  const response = await request(`/traffic/live/${encodeURIComponent(sessionId)}`);
+  return response.data;
+}
+
+export async function stopLiveSimulation(sessionId) {
+  const response = await request(`/traffic/live/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
   return response.data;
 }
 

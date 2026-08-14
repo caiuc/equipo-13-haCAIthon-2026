@@ -13,6 +13,9 @@ except ImportError:  # pragma: no cover
     clingo = None
 
 
+_FORBIDDEN_CUSTOM_DIRECTIVES = ("#script", "#include")
+
+
 def atom(value: str) -> str:
     safe = ''.join(ch if ch.isalnum() or ch == '_' else '_' for ch in str(value)).lower()
     if not safe or safe[0].isdigit():
@@ -20,9 +23,30 @@ def atom(value: str) -> str:
     return safe
 
 
+def validate_custom_program(program: str | None) -> str:
+    """Valida reglas ASP recibidas desde UI antes de entregarlas a Clingo.
+
+    El archivo se agrega al núcleo ``rules.lp``. Se prohíben directivas que puedan
+    ejecutar código embebido o leer archivos del servidor. El programa sigue
+    pudiendo declarar hechos, restricciones, reglas y optimizaciones ASP normales.
+    """
+    if not program:
+        return ""
+    if not isinstance(program, str):
+        raise ValueError("clingoProgram debe ser texto")
+    if len(program.encode("utf-8")) > 200_000:
+        raise ValueError("El archivo Clingo no puede superar 200 KB")
+    lowered = program.lower()
+    forbidden = [directive for directive in _FORBIDDEN_CUSTOM_DIRECTIVES if directive in lowered]
+    if forbidden:
+        raise ValueError(f"Directiva Clingo no permitida: {', '.join(forbidden)}")
+    return program.strip()
+
+
 class ClingoTopologyEngine:
-    def __init__(self, rules_path: str | Path | None = None):
+    def __init__(self, rules_path: str | Path | None = None, extra_program: str | None = None):
         self.rules_path = Path(rules_path) if rules_path else Path(__file__).with_name('rules.lp')
+        self.extra_program = validate_custom_program(extra_program)
 
     def _facts_for_intersection(self, iid: str, inter: dict[str, Any]) -> tuple[str, dict[str, str]]:
         names: dict[str, str] = {}
@@ -39,13 +63,15 @@ class ClingoTopologyEngine:
             for t in lane.get('allowed_turns', []):
                 lines.append(f'lane_allows({I},{L},{atom(t)}).')
         seen_targets = set()
-        for c in candidates:
-            key = (c.from_branch, c.turn, c.to_branch)
+        for candidate in candidates:
+            key = (candidate.from_branch, candidate.turn, candidate.to_branch)
             if key not in seen_targets:
                 seen_targets.add(key)
-                lines.append(f'turn_target({I},{atom(c.from_branch)},{atom(c.turn)},{atom(c.to_branch)}).')
-                names[atom(c.to_branch)] = c.to_branch
-        for (lane_id,to_branch), zones in occupancy_facts(candidates).items():
+                lines.append(
+                    f'turn_target({I},{atom(candidate.from_branch)},{atom(candidate.turn)},{atom(candidate.to_branch)}).'
+                )
+                names[atom(candidate.to_branch)] = candidate.to_branch
+        for (lane_id, to_branch), zones in occupancy_facts(candidates).items():
             for zone in sorted(zones):
                 lines.append(f'occupies({I},{atom(lane_id)},{atom(to_branch)},{atom(zone)}).')
         return '\n'.join(lines), names
@@ -58,9 +84,13 @@ class ClingoTopologyEngine:
         rules = self.rules_path.read_text(encoding='utf-8')
         for iid, inter in cfg['intersections'].items():
             facts, names = self._facts_for_intersection(iid, inter)
+            program = f"{rules}\n{facts}"
+            if self.extra_program:
+                program = f"{program}\n% --- Reglas cargadas por el usuario ---\n{self.extra_program}\n"
+
             ctl = clingo.Control(['0'])
             ctl.configuration.solve.opt_mode = 'optN'
-            ctl.add('base', [], rules + '\n' + facts)
+            ctl.add('base', [], program)
             ctl.ground([('base', [])])
 
             best_symbols = None
@@ -78,28 +108,33 @@ class ClingoTopologyEngine:
             conflicts: set[frozenset[str]] = set()
             phase_members: dict[int, list[Movement]] = defaultdict(list)
 
-            # Primero movimientos para poder mapear in_phase.
-            for s in best_symbols:
-                if s.name == 'movement' and len(s.arguments) == 5:
-                    _, L, F, T, Turn = s.arguments
-                    lane, frm, to, turn = map(str, (L,F,T,Turn))
-                    m = Movement(iid, names.get(lane,lane), names.get(frm,frm), names.get(to,to), names.get(turn,turn))
-                    movements[(lane,to)] = m
+            for symbol in best_symbols:
+                if symbol.name == 'movement' and len(symbol.arguments) == 5:
+                    _, lane_atom, from_atom, to_atom, turn_atom = symbol.arguments
+                    lane, frm, to, turn = map(str, (lane_atom, from_atom, to_atom, turn_atom))
+                    movement = Movement(
+                        iid,
+                        names.get(lane, lane),
+                        names.get(frm, frm),
+                        names.get(to, to),
+                        names.get(turn, turn),
+                    )
+                    movements[(lane, to)] = movement
 
-            for s in best_symbols:
-                if s.name == 'conflict' and len(s.arguments) == 5:
-                    _, L1,T1,L2,T2 = s.arguments
-                    k1 = movements.get((str(L1), str(T1)))
-                    k2 = movements.get((str(L2), str(T2)))
-                    if k1 and k2:
-                        conflicts.add(frozenset((k1.key, k2.key)))
-                elif s.name == 'in_phase' and len(s.arguments) == 4:
-                    _, L,T,P = s.arguments
-                    m = movements.get((str(L), str(T)))
-                    if m:
-                        phase_members[int(str(P))].append(m)
+            for symbol in best_symbols:
+                if symbol.name == 'conflict' and len(symbol.arguments) == 5:
+                    _, lane1, to1, lane2, to2 = symbol.arguments
+                    first = movements.get((str(lane1), str(to1)))
+                    second = movements.get((str(lane2), str(to2)))
+                    if first and second:
+                        conflicts.add(frozenset((first.key, second.key)))
+                elif symbol.name == 'in_phase' and len(symbol.arguments) == 4:
+                    _, lane_atom, to_atom, phase_atom = symbol.arguments
+                    movement = movements.get((str(lane_atom), str(to_atom)))
+                    if movement:
+                        phase_members[int(str(phase_atom))].append(movement)
 
-            phases = [Phase(index=p-1, movements=phase_members[p]) for p in sorted(phase_members)]
+            phases = [Phase(index=phase_id - 1, movements=phase_members[phase_id]) for phase_id in sorted(phase_members)]
             logic = IntersectionLogic(iid, list(movements.values()), conflicts, phases)
             self.assert_safe(logic)
             all_logic[iid] = logic
@@ -108,8 +143,8 @@ class ClingoTopologyEngine:
     @staticmethod
     def assert_safe(logic: IntersectionLogic) -> None:
         for phase in logic.phases:
-            keys = [m.key for m in phase.movements]
-            for i, a in enumerate(keys):
-                for b in keys[i+1:]:
-                    if frozenset((a,b)) in logic.conflicts:
-                        raise AssertionError(f'Fase insegura en {logic.intersection_id}: {a} vs {b}')
+            keys = [movement.key for movement in phase.movements]
+            for index, first in enumerate(keys):
+                for second in keys[index + 1:]:
+                    if frozenset((first, second)) in logic.conflicts:
+                        raise AssertionError(f'Fase insegura en {logic.intersection_id}: {first} vs {second}')

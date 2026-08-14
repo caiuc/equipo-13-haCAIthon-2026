@@ -32,3 +32,29 @@ def test_snapshot_is_frontend_friendly():
     assert snapshot["vehicles"][0]["kind"] == "BUS"
     assert snapshot["intersections"]["i1"]["activeMovements"] == ["lane->east"]
     assert "nodes" in snapshot and "links" in snapshot
+
+
+def test_snapshot_exposes_four_branch_signal_colors():
+    cfg = load_config(Path(__file__).resolve().parents[1] / "config" / "scenarios" / "example_network.yaml")
+    movement = SimpleNamespace(key="w_through->east", from_branch="west")
+    controller = SimpleNamespace(
+        phase_index=0,
+        pending_phase=None,
+        mode=SimpleNamespace(value="GREEN"),
+        elapsed_s=4.0,
+        action_mask=lambda: [True],
+    )
+    env = SimpleNamespace(
+        network=SimpleNamespace(time_s=2.0, vehicles={}),
+        controllers={"i1": controller},
+        logic={"i1": SimpleNamespace(phases=[SimpleNamespace(movements=[movement])])},
+        last_actions={"i1": 0},
+        last_reward_components={},
+        decision_count=1,
+    )
+    snapshot = build_network_snapshot(cfg, env)
+    signals = snapshot["intersections"]["i1"]["branchSignals"]
+    assert signals["west"] == "GREEN"
+    assert signals["north"] == "RED"
+    assert signals["east"] == "RED"
+    assert signals["south"] == "RED"

@@ -1,11 +1,13 @@
 const { Injectable } = require('@nestjs/common');
 const { PythonProcessService } = require('./python-process.service');
 const { TrafficJobService } = require('./traffic-job.service');
+const { TrafficLiveService } = require('./traffic-live.service');
 
 class TrafficControlService {
-  constructor(pythonProcessService, trafficJobService) {
+  constructor(pythonProcessService, trafficJobService, trafficLiveService) {
     this.pythonProcessService = pythonProcessService;
     this.trafficJobService = trafficJobService;
+    this.trafficLiveService = trafficLiveService;
   }
 
   async listScenarios() {
@@ -28,6 +30,22 @@ class TrafficControlService {
     return this.trafficJobService.start('evaluate', parameters);
   }
 
+  startLiveSimulation(parameters) {
+    return this.trafficLiveService.start(parameters);
+  }
+
+  getLiveSimulation(sessionId) {
+    return this.trafficLiveService.get(sessionId);
+  }
+
+  stopLiveSimulation(sessionId) {
+    return this.trafficLiveService.stop(sessionId);
+  }
+
+  subscribeLiveSimulation(sessionId, subscriber) {
+    return this.trafficLiveService.subscribe(sessionId, subscriber);
+  }
+
   getJob(jobId) {
     return this.trafficJobService.get(jobId);
   }
@@ -40,7 +58,7 @@ class TrafficControlService {
 Injectable()(TrafficControlService);
 Reflect.defineMetadata(
   'design:paramtypes',
-  [PythonProcessService, TrafficJobService],
+  [PythonProcessService, TrafficJobService, TrafficLiveService],
   TrafficControlService,
 );
 

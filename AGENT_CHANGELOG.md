@@ -80,3 +80,60 @@ Adaptar el sistema Python DQN + Clingo + simulación microscópica al monorepo e
 ### Pendientes
 - Ejecutar `npm install` y `npm run build --workspace=frontend` en un entorno con acceso al registro npm.
 - Ejecutar el test de integración Clingo en un entorno donde `clingo` esté instalado mediante `backend/requirements.txt`.
+
+## 2026-08-14 — Demo visual de dos cruces + simulación DQN continua
+
+### Objetivo
+Convertir la interfaz en una demostración clara de dos intersecciones de cuatro vías conectadas, permitiendo cargar reglas Clingo, definir cuánto entrenar y observar indefinidamente las decisiones de un checkpoint DQN sobre tráfico microscópico.
+
+### Cambios principales
+- Rediseñado `example_network.yaml` como dos cruces de cuatro vías unidos por una avenida principal, con dos carriles entrantes por aproximación (izquierda exclusiva + recto/derecha), dos recorridos de bus opuestos y paraderos en ambos sentidos.
+- Añadida carga opcional de archivos `.lp` desde React. Las reglas se agregan al núcleo `rules.lp`; se limitan a 200 KB y se bloquean `#script` y `#include` para impedir ejecución de código embebido o lectura arbitraria de archivos.
+- `ClingoTopologyEngine` acepta reglas ASP adicionales manteniendo la derivación de movimientos, conflictos y fases seguras.
+- Añadida telemetría de cuatro cabezales por intersección (`north/east/south/west`) con estado `RED`, `YELLOW` o `GREEN`, fase solicitada por DQN, fase activa, movimientos y componentes de recompensa.
+- Añadido `live_simulation.py`: carga un checkpoint DQN y genera decisiones/frames continuamente. Al completar un ciclo de tráfico, reinicia con una nueva semilla y continúa hasta recibir `SIGTERM`.
+- Añadido `TrafficLiveService` en NestJS y endpoints para iniciar, consultar y detener sesiones de simulación viva.
+- Extendido `PythonProcessService` para mantener un proceso Python streaming mediante NDJSON sin usar shell ni comandos arbitrarios.
+- Simplificado el frontend a tres pasos: Clingo → entrenamiento → simulación continua.
+- Rediseñada la visualización SVG: calzada de cuatro carriles (dos por sentido), separadores de pista, vehículos orientados, buses diferenciados por recorrido/estado, paraderos, movimientos activos y ocho cabezales semafóricos de tres luces claramente visibles.
+- Añadido panel en vivo que muestra la fase solicitada por cada DQN y el historial inmediato de decisiones.
+
+### Validaciones
+- `PYTHONPATH=src python3 -m pytest -q`: 14 aprobados, 1 omitido por falta de Clingo en el sandbox.
+- `python3 -m compileall`: correcto.
+- `node --check` en servicios/controladores/DTO del backend: correcto.
+- Parseo de todos los `.js/.jsx` de `frontend/src` mediante el parser JSX de TypeScript: correcto.
+
+### Nota de operación
+La sesión continua no reproduce un video pregrabado: mantiene un proceso Python ejecutando el checkpoint. Cada ciclo usa una semilla diferente y el proceso permanece activo hasta que el usuario pulsa “Detener simulación”.
+
+## 2026-08-14 — Streaming SSE y simulación microscópica en tiempo real
+
+### Objetivo
+Hacer que la demo live represente el avance microscópico real de la simulación, sin polling ni saltos visuales de 5 segundos.
+
+### Cambios principales
+- Separado el intervalo de decisión DQN (`5 s`) del paso microscópico (`dt=0,2 s`) en `MultiAgentTrafficEnv` mediante `begin_decision`, `advance_micro_step` y `finish_decision`.
+- `live_simulation.py` transmite un frame por cada micro-paso de `0,2 s`; a `1×`, el reloj se sincroniza con `time.monotonic()` para que 1 segundo simulado sea aproximadamente 1 segundo real.
+- El DQN continúa tomando una acción solo cada 5 segundos simulados, manteniendo coherencia con el entrenamiento.
+- Sustituido el polling HTTP del frontend por **Server-Sent Events (SSE)** mediante `GET /api/traffic/live/:sessionId/stream`.
+- `TrafficLiveService` mantiene suscriptores por sesión y publica ciclos, decisiones y frames apenas llegan desde Python.
+- React consume el stream mediante `EventSource`, actualizando autos, buses, semáforos, métricas y decisiones sin esperar a una consulta periódica.
+- Añadidos indicadores visibles de conexión SSE, número de frame, decisión DQN, `dt`, factor temporal y estado de tiempo real.
+- El selector de velocidad ahora representa escala temporal (`0,5×`, `1×`, `2×`, `4×`) y no un retardo arbitrario entre decisiones.
+
+### Validaciones
+- `PYTHONPATH=src pytest -q`: 17 aprobados, 1 omitido únicamente por ausencia de `clingo` en el sandbox.
+- `python3 -m py_compile` / `compileall`: correcto.
+- `node --check` en servicios/controladores/DTO actualizados: correcto.
+- El `npm install` del sandbox no pudo completarse por timeout del registro; no se agregaron dependencias Node nuevas.
+
+## 2026-08-14 — Fix definitivo de animación en tiempo real
+
+- Corregido `useLiveSimulation`: bajo React `StrictMode` el cleanup de verificación dejaba `mounted.current=false`, por lo que el navegador descartaba todos los frames SSE aunque NestJS/Python siguieran funcionando.
+- El hook ahora reactiva el estado montado en cada setup y procesa los frames SSE normalmente.
+- Añadido fallback automático de snapshots reales cada 250 ms si SSE no entrega eventos durante 900 ms.
+- El endpoint SSE fuerza `setNoDelay`, `flush()` y `retry: 750` para reducir buffering en desarrollo/proxies.
+- El escenario demo crea tráfico desde el primer micro-paso (`spawn_immediately`) y ambos recorridos B1/B2 parten en `t=0`.
+- Los tiempos semafóricos de demo permiten observar transiciones en pocos segundos manteniendo mínimo verde, amarillo obligatorio y máximo de rojo.
+- Agregadas pruebas que verifican movimiento real de autos/buses entre micro-pasos y transición visible GREEN → YELLOW → RED/GREEN por rama.

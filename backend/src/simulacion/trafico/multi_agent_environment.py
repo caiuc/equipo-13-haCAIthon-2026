@@ -35,6 +35,8 @@ class MultiAgentTrafficEnv:
         self.last_observations={}
         self.last_raw={}
         self._last_completed=0
+        self.last_actions={iid:0 for iid in self.logic}
+        self.decision_count=0
 
     def reset(self):
         self._build_runtime()
@@ -98,31 +100,66 @@ class MultiAgentTrafficEnv:
         self.last_raw=raw
         return observations
 
-    def step(self, actions: dict[str,int]):
-        before_changes={iid:c.phase_changes for iid,c in self.controllers.items()}
-        for iid,action in actions.items():
+    def begin_decision(self, actions: dict[str, int]) -> dict:
+        """Aplica una decisión sin avanzar el reloj.
+
+        La separación permite que la simulación en vivo avance a ``dt_s`` y
+        transmita cada micro-paso, mientras entrenamiento/evaluación conservan
+        exactamente el intervalo de decisión configurado para el DQN.
+        """
+        self.last_actions = {iid: int(action) for iid, action in actions.items()}
+        self.decision_count += 1
+        context = {
+            'before_changes': {iid: c.phase_changes for iid, c in self.controllers.items()},
+            'started_at_s': self.network.time_s,
+        }
+        for iid, action in actions.items():
             self.controllers[iid].request_phase(int(action))
+        return context
 
-        target=self.network.time_s+self.decision_interval
+    def advance_micro_step(self) -> None:
+        """Avanza un único paso microscópico (normalmente 0,2 s)."""
+        for controller in self.controllers.values():
+            controller.tick(self.network.dt)
+        self.network.step(self.signal_green)
+        self._update_headways()
+
+    def finish_decision(self, context: dict):
+        """Cierra el intervalo de decisión y calcula observación/recompensa."""
+        completed_delta = len(self.network.completed) - self._last_completed
+        self._last_completed = len(self.network.completed)
+        obs = self._observe_and_message()
+        rewards = {}
+        components = {}
+        before_changes = context.get('before_changes', {})
+        for iid, controller in self.controllers.items():
+            cam, buses, _ = self.last_raw[iid]
+            changed = controller.phase_changes > before_changes.get(iid, controller.phase_changes)
+            reward, detail = self.rewards[iid].calculate(
+                cam,
+                buses,
+                completed_delta / max(1, len(self.controllers)),
+                changed,
+            )
+            rewards[iid] = reward
+            components[iid] = detail
+        self.last_reward_components = components
+        self.last_observations = obs
+        done = self.network.time_s >= self.episode_seconds
+        info = {
+            'time_s': self.network.time_s,
+            'completed': len(self.network.completed),
+            'reward_components': components,
+            'bunching_events': list(self.headways.events),
+        }
+        return obs, rewards, done, info
+
+    def step(self, actions: dict[str,int]):
+        context = self.begin_decision(actions)
+        target = self.network.time_s + self.decision_interval
         while self.network.time_s < target and self.network.time_s < self.episode_seconds:
-            for c in self.controllers.values(): c.tick(self.network.dt)
-            self.network.step(self.signal_green)
-            self._update_headways()
-
-        completed_delta=len(self.network.completed)-self._last_completed
-        self._last_completed=len(self.network.completed)
-        obs=self._observe_and_message()
-        rewards={}; components={}
-        for iid,c in self.controllers.items():
-            cam,buses,_=self.last_raw[iid]
-            changed=c.phase_changes>before_changes[iid]
-            r,comp=self.rewards[iid].calculate(cam,buses,completed_delta/max(1,len(self.controllers)),changed)
-            rewards[iid]=r; components[iid]=comp
-        self.last_reward_components=components; self.last_observations=obs
-        done=self.network.time_s>=self.episode_seconds
-        info={'time_s':self.network.time_s,'completed':len(self.network.completed),'reward_components':components,
-              'bunching_events':list(self.headways.events)}
-        return obs,rewards,done,info
+            self.advance_micro_step()
+        return self.finish_decision(context)
 
     def heuristic_actions(self) -> dict[str,int]:
         """Baseline seguro: prioriza la fase del bus atrasado/riesgoso más cercano; si no, la cola mayor."""

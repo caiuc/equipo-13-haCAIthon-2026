@@ -71,8 +71,14 @@ class TrafficNetwork:
         self._bus_schedule = self._build_bus_schedule()
         self._last_release.clear()
         self._car_next_spawn.clear()
+        spawn_immediately = bool(self.cfg.get('simulation', {}).get('spawn_immediately', False))
         for origin in self._od_by_origin:
-            self._schedule_next_car(origin)
+            if spawn_immediately:
+                # El primer micro-paso genera un auto por origen y después
+                # continúa el proceso Poisson normal del escenario.
+                self._car_next_spawn[origin] = 0.0
+            else:
+                self._schedule_next_car(origin)
 
     def _new_car(self, origin: str):
         choices = self._od_by_origin.get(origin, [])

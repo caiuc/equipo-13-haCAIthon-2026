@@ -48,21 +48,24 @@ class SignalController:
                 if frozenset((a,b)) in self.logic.conflicts:
                     raise AssertionError(f'Fase {phase_index} insegura: {a} y {b}')
 
-    def action_mask(self) -> list[bool]:
+    def action_mask(self, record_restriction: bool = True) -> list[bool]:
         n = len(self.logic.phases)
         if self.mode == SignalMode.YELLOW:
-            self.restriction_counts['yellow_lock'] += 1
+            if record_restriction:
+                self.restriction_counts['yellow_lock'] += 1
             # No se acepta una nueva decisión durante la transición.
             return [i == (self.pending_phase if self.pending_phase is not None else self.phase_index) for i in range(n)]
         if self.elapsed_s < self.min_green_s:
-            self.restriction_counts['min_green'] += 1
+            if record_restriction:
+                self.restriction_counts['min_green'] += 1
             return [i == self.phase_index for i in range(n)]
 
         overdue = {k for k,t in self.red_elapsed.items() if t >= self.max_red_s}
         if overdue:
             candidates = [bool(self.phase_keys(i) & overdue) for i in range(n)]
             if any(candidates):
-                self.restriction_counts['max_red'] += 1
+                if record_restriction:
+                    self.restriction_counts['max_red'] += 1
                 return candidates
         return [True] * n
 

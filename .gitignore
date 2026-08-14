@@ -26,5 +26,7 @@ __pycache__/
 .pytest_cache/
 backend/outputs/*
 !backend/outputs/.gitkeep
+
+# Windows / WSL Mark of the Web
 *:Zone.Identifier
 Zone.Identifier

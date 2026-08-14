@@ -103,7 +103,7 @@ def _safe_checkpoint_directory(parameters: dict) -> Path | None:
 def _load_runtime(parameters: dict):
     scenario = _scenario_path(parameters)
     cfg = load_config(scenario)
-    logic = ClingoTopologyEngine().solve(cfg)
+    logic = ClingoTopologyEngine(extra_program=parameters.get("clingoProgram")).solve(cfg)
     return scenario, cfg, logic
 
 
@@ -121,6 +121,8 @@ def operation_topology(parameters: dict) -> dict:
         "links": cfg["links"],
         "stops": cfg.get("stops", {}),
         "busRoutes": cfg.get("bus_routes", {}),
+        "intersections": cfg.get("intersections", {}),
+        "display": cfg.get("display", {}),
     }
     return result
 
@@ -128,12 +130,13 @@ def operation_topology(parameters: dict) -> dict:
 def operation_simulate(parameters: dict) -> dict:
     scenario, cfg, logic = _load_runtime(parameters)
     seconds = _positive_number(parameters, "seconds", 900.0, 5.0, 86400.0)
-    env, metrics = run_baseline_simulation(cfg, logic, seconds)
+    env, metrics, timeline = run_baseline_simulation(cfg, logic, seconds)
     return {
         "scenario": scenario.name,
         "controller": "heuristic-safe-baseline",
         "metrics": metrics,
         "snapshot": build_network_snapshot(cfg, env),
+        "timeline": timeline,
     }
 
 
@@ -158,13 +161,14 @@ def operation_evaluate(parameters: dict) -> dict:
     scenario, cfg, logic = _load_runtime(parameters)
     seconds = _positive_number(parameters, "seconds", 1800.0, 5.0, 86400.0)
     checkpoints = _safe_checkpoint_directory(parameters)
-    env, metrics = evaluate(cfg, logic, seconds, checkpoints)
+    env, metrics, timeline = evaluate(cfg, logic, seconds, checkpoints)
     return {
         "scenario": scenario.name,
         "checkpointRunId": checkpoints.name if checkpoints else None,
         "controller": "dqn" if checkpoints else "heuristic-safe-baseline",
         "metrics": metrics,
         "snapshot": build_network_snapshot(cfg, env),
+        "timeline": timeline,
     }
 
 
