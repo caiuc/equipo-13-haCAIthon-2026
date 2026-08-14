@@ -22,7 +22,9 @@ def test_demo_spawns_and_moves_cars_and_buses_from_first_micro_step():
     cars = [vehicle for vehicle in network.vehicles.values() if vehicle.kind.value == "CAR"]
 
     assert len(buses) >= 2
-    assert len(cars) >= 6
+    # Los orígenes oeste/este pueden quedar temporalmente reservados por los buses
+    # iniciales; los autos esperan en vez de aparecer físicamente superpuestos.
+    assert len(cars) >= 4
 
     for _ in range(4):
         network.step(lambda *_: True)

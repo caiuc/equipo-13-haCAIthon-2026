@@ -1,244 +1,161 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
-const BRANCH_VECTOR = {
-  north: { x: 0, y: -1, label: 'N' },
-  east: { x: 1, y: 0, label: 'E' },
-  south: { x: 0, y: 1, label: 'S' },
-  west: { x: -1, y: 0, label: 'O' },
-};
-
-function bounds(nodes = {}) {
-  const list = Object.values(nodes);
-  if (!list.length) return { x: -700, y: -480, width: 1400, height: 960 };
-  const xs = list.map((node) => Number(node.x));
-  const ys = list.map((node) => Number(node.y));
-  const minX = Math.min(...xs) - 105;
-  const maxX = Math.max(...xs) + 105;
-  const minY = Math.min(...ys) - 105;
-  const maxY = Math.max(...ys) + 105;
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-}
-
-function segmentKey(a, b) {
-  const first = `${Number(a.x).toFixed(2)},${Number(a.y).toFixed(2)}`;
-  const second = `${Number(b.x).toFixed(2)},${Number(b.y).toFixed(2)}`;
-  return [first, second].sort().join('|');
-}
+const SIGNAL_RGB = { RED: '#ff4d57', YELLOW: '#ffd54a', GREEN: '#42e878' };
+const BRANCH_SHORT = { north: 'N', east: 'E', south: 'S', west: 'O' };
 
 function uniqueRoads(network) {
-  const found = new Map();
-  Object.entries(network.links || {}).forEach(([id, link]) => {
-    const from = network.nodes?.[link.from];
-    const to = network.nodes?.[link.to];
-    if (!from || !to) return;
-    const key = segmentKey(from, to);
-    if (!found.has(key)) found.set(key, { id, from, to });
-  });
-  return [...found.values()];
-}
-
-function shiftedLine(from, to, offset) {
-  const dx = Number(to.x) - Number(from.x);
-  const dy = Number(to.y) - Number(from.y);
-  const length = Math.hypot(dx, dy) || 1;
-  const px = -dy / length;
-  const py = dx / length;
-  return {
-    x1: Number(from.x) + px * offset,
-    y1: Number(from.y) + py * offset,
-    x2: Number(to.x) + px * offset,
-    y2: Number(to.y) + py * offset,
-  };
-}
-
-function hash(text) {
-  return [...String(text)].reduce((value, char) => ((value * 31) + char.charCodeAt(0)) >>> 0, 7);
-}
-
-function vehiclePose(vehicle, network) {
-  const link = network.links?.[vehicle.linkId];
-  if (!link) return { x: Number(vehicle.x), y: Number(vehicle.y), angle: 0 };
-  const from = network.nodes?.[link.from];
-  const to = network.nodes?.[link.to];
-  if (!from || !to) return { x: Number(vehicle.x), y: Number(vehicle.y), angle: 0 };
-  const dx = Number(to.x) - Number(from.x);
-  const dy = Number(to.y) - Number(from.y);
-  const length = Math.hypot(dx, dy) || 1;
-  const px = -dy / length;
-  const py = dx / length;
-  const laneWithinDirection = hash(vehicle.id) % 2 === 0 ? 7 : 18;
-  const carriagewayOffset = 7 + laneWithinDirection;
-  return {
-    x: Number(vehicle.x) + px * carriagewayOffset,
-    y: Number(vehicle.y) + py * carriagewayOffset,
-    angle: Math.atan2(dy, dx) * (180 / Math.PI),
-  };
-}
-
-function stopPose(stop, network) {
-  const link = network.links?.[stop.link];
-  if (!link) return null;
-  const from = network.nodes?.[link.from];
-  const to = network.nodes?.[link.to];
-  if (!from || !to) return null;
-  const fraction = Math.max(0, Math.min(1, Number(stop.position_m || 0) / Math.max(1, Number(link.length_m || 1))));
-  const dx = Number(to.x) - Number(from.x);
-  const dy = Number(to.y) - Number(from.y);
-  const length = Math.hypot(dx, dy) || 1;
-  const px = -dy / length;
-  const py = dx / length;
-  return {
-    x: Number(from.x) + dx * fraction + px * 31,
-    y: Number(from.y) + dy * fraction + py * 31,
-    angle: Math.atan2(dy, dx) * (180 / Math.PI),
-  };
-}
-
-function SignalHead({ x, y, branch, state = 'RED' }) {
-  const color = String(state).toUpperCase();
-  return (
-    <g className="traffic-head" transform={`translate(${x} ${y})`}>
-      <rect x="-9" y="-22" width="18" height="44" rx="7" />
-      <circle className={`bulb red ${color === 'RED' ? 'on' : ''}`} cx="0" cy="-12" r="5" />
-      <circle className={`bulb yellow ${color === 'YELLOW' ? 'on' : ''}`} cx="0" cy="0" r="5" />
-      <circle className={`bulb green ${color === 'GREEN' ? 'on' : ''}`} cx="0" cy="12" r="5" />
-      <text x="0" y="34" textAnchor="middle">{BRANCH_VECTOR[branch]?.label || branch}</text>
-    </g>
-  );
-}
-
-function movementPath(node, fromBranch, toBranch) {
-  const from = BRANCH_VECTOR[fromBranch];
-  const to = BRANCH_VECTOR[toBranch];
-  if (!from || !to) return '';
-  const radius = 43;
-  const x1 = Number(node.x) + from.x * radius;
-  const y1 = Number(node.y) + from.y * radius;
-  const x2 = Number(node.x) + to.x * radius;
-  const y2 = Number(node.y) + to.y * radius;
-  return `M ${x1} ${y1} Q ${node.x} ${node.y} ${x2} ${y2}`;
-}
-
-function signalPosition(node, branch) {
-  const positions = {
-    north: { x: Number(node.x) + 47, y: Number(node.y) - 64 },
-    east: { x: Number(node.x) + 64, y: Number(node.y) + 47 },
-    south: { x: Number(node.x) - 47, y: Number(node.y) + 64 },
-    west: { x: Number(node.x) - 64, y: Number(node.y) - 47 },
-  };
-  return positions[branch];
-}
-
-function statusLabel(status) {
-  return ({ normal: 'Normal', adelantado: 'Adelantado', atrasado: 'Atrasado', riesgo_bunching: 'Riesgo de bunching', critico_bunching: 'Bunching crítico' })[status] || status || 'Normal';
-}
-
-export default function NetworkVisualization({ snapshot, topology, liveStatus = 'idle', connectionStatus = 'closed', streamInfo, frameSequence = 0 }) {
-  const [selected, setSelected] = useState(null);
-  const staticNetwork = topology?.network;
-  const network = snapshot?.nodes ? snapshot : staticNetwork;
-  const view = useMemo(() => bounds(network?.nodes), [network?.nodes]);
-  const roads = useMemo(() => network ? uniqueRoads(network) : [], [network]);
-
-  if (!network?.nodes || !network?.links) {
-    return <div className="sim-empty"><strong>La simulación aparecerá aquí</strong><span>Valida Clingo para cargar los dos cruces.</span></div>;
+  const nodes = network?.nodes || {};
+  const seen = new Set();
+  const roads = [];
+  for (const [id, link] of Object.entries(network?.links || {})) {
+    const a = nodes[link.from], b = nodes[link.to];
+    if (!a || !b) continue;
+    const p1 = `${a.x},${a.y}`, p2 = `${b.x},${b.y}`;
+    const key = [p1,p2].sort().join('|');
+    if (seen.has(key)) continue;
+    seen.add(key); roads.push({ id, a, b });
   }
+  return roads;
+}
 
-  const intersectionConfig = snapshot?.intersectionsConfig || network.intersections || {};
-  const states = snapshot?.intersections || {};
-  const vehicles = snapshot?.vehicles || [];
-  const buses = vehicles.filter((vehicle) => vehicle.kind === 'BUS');
-  const cars = vehicles.filter((vehicle) => vehicle.kind !== 'BUS');
-  const dtS = Number(streamInfo?.simulationDtS || 0.2);
-  const realTimeFactor = Number(streamInfo?.realTimeFactor || 1);
-  const frameMs = Math.max(35, (dtS / Math.max(realTimeFactor, 0.01)) * 1000);
-  const streamLive = liveStatus === 'running' && ['live', 'fallback'].includes(connectionStatus);
-  const transportLabel = connectionStatus === 'fallback' ? 'RESPALDO 250 ms' : 'SSE';
+function boundsFor(network) {
+  const values = Object.values(network?.nodes || {});
+  if (!values.length) return { minX:-380,maxX:380,minY:-220,maxY:220 };
+  return {
+    minX: Math.min(...values.map(n=>Number(n.x))), maxX: Math.max(...values.map(n=>Number(n.x))),
+    minY: Math.min(...values.map(n=>Number(n.y))), maxY: Math.max(...values.map(n=>Number(n.y))),
+  };
+}
 
-  return (
-    <div className="city-sim-shell">
-      <div className="sim-toolbar">
-        <div className="sim-live-title"><span className={`live-led ${streamLive ? 'running' : liveStatus}`} /><strong>{streamLive ? 'TRÁFICO EN TIEMPO REAL' : liveStatus === 'running' ? 'RECIBIENDO SIMULACIÓN…' : 'VISTA DE LA RED'}</strong>{streamLive && <em>{transportLabel}</em>}</div>
-        <div className="sim-counters"><span><b>{cars.length}</b> autos</span><span><b>{buses.length}</b> buses</span><span><b>{Number(snapshot?.timeS || 0).toFixed(1)} s</b> simulados</span>{liveStatus === 'running' && <span><b>#{frameSequence}</b> frame</span>}{streamLive && <span><b>{realTimeFactor.toFixed(1)}×</b> reloj</span>}</div>
-      </div>
+function vehicleMap(snapshot) { return new Map((snapshot?.vehicles || []).map(v => [v.id, v])); }
 
-      <div className="city-sim-stage">
-        {streamLive && <div className="realtime-overlay"><span className="pulse-dot" /><strong>EN TIEMPO REAL</strong><small>dt {dtS.toFixed(1)} s · DQN cada {Number(streamInfo?.decisionIntervalS || 5).toFixed(0)} s</small></div>}
-        <svg className="city-sim" style={{ '--frame-ms': `${frameMs}ms` }} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} role="img" aria-label="Dos intersecciones semaforizadas conectadas en tiempo real">
-          <defs>
-            <filter id="signalGlow"><feGaussianBlur stdDeviation="4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-            <marker id="movementArrowGreen" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#69e2ab" /></marker>
-            <marker id="movementArrowYellow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#ffd365" /></marker>
-          </defs>
+export default function NetworkVisualization({ snapshot, topology, connectionStatus='closed', frameSequence=0 }) {
+  const canvasRef = useRef(null);
+  const previousRef = useRef(snapshot);
+  const targetRef = useRef(snapshot);
+  const receivedAtRef = useRef(performance.now());
+  const topologyRef = useRef(topology);
+  topologyRef.current = topology;
 
-          <rect className="city-ground" x={view.x} y={view.y} width={view.width} height={view.height} />
-          {roads.map((road) => {
-            const laneA = shiftedLine(road.from, road.to, -15);
-            const laneB = shiftedLine(road.from, road.to, 15);
-            return (
-              <g key={road.id} className="road-group">
-                <line className="road-edge" x1={road.from.x} y1={road.from.y} x2={road.to.x} y2={road.to.y} />
-                <line className="road-bed" x1={road.from.x} y1={road.from.y} x2={road.to.x} y2={road.to.y} />
-                <line className="road-center" x1={road.from.x} y1={road.from.y} x2={road.to.x} y2={road.to.y} />
-                <line className="lane-divider" {...laneA} />
-                <line className="lane-divider" {...laneB} />
-              </g>
-            );
-          })}
+  useEffect(() => {
+    if (!snapshot) return;
+    previousRef.current = targetRef.current || snapshot;
+    targetRef.current = snapshot;
+    receivedAtRef.current = performance.now();
+  }, [snapshot]);
 
-          {Object.entries(network.stops || {}).map(([id, stop]) => {
-            const pose = stopPose(stop, network);
-            if (!pose) return null;
-            return <g key={id} className="bus-stop" transform={`translate(${pose.x} ${pose.y}) rotate(${pose.angle})`} onClick={() => setSelected({ type: 'stop', id, ...stop })}><rect x="-8" y="-6" width="16" height="12" rx="3" /><line x1="0" y1="-6" x2="0" y2="-18" /><circle cx="0" cy="-21" r="4" /></g>;
-          })}
+  const roads = useMemo(() => uniqueRoads(topology?.network), [topology]);
 
-          {Object.entries(network.nodes).filter(([, node]) => node.kind === 'intersection').map(([id, node]) => {
-            const state = states[id] || {};
-            const config = intersectionConfig[id] || {};
-            return (
-              <g key={id} className="intersection-group" onClick={() => setSelected({ type: 'intersection', id, state, config })}>
-                <rect className="intersection-asphalt" x={Number(node.x) - 39} y={Number(node.y) - 39} width="78" height="78" rx="4" />
-                <rect className="intersection-border" x={Number(node.x) - 39} y={Number(node.y) - 39} width="78" height="78" rx="4" />
-                {(state.activeMovements || []).map((movement) => {
-                  const [lane, toBranch] = String(movement).split('->');
-                  const fromBranch = config.incoming_lanes?.[lane]?.branch;
-                  const path = movementPath(node, fromBranch, toBranch);
-                  return path ? <path key={movement} className={`active-movement ${state.mode === 'YELLOW' ? 'yellow' : ''}`} d={path} markerEnd={state.mode === 'YELLOW' ? 'url(#movementArrowYellow)' : 'url(#movementArrowGreen)'} /> : null;
-                })}
-                {Object.keys(config.branches || { north: {}, east: {}, south: {}, west: {} }).map((branch) => {
-                  const pos = signalPosition(node, branch);
-                  return <SignalHead key={branch} x={pos.x} y={pos.y} branch={branch} state={state.branchSignals?.[branch] || 'RED'} />;
-                })}
-                <g className="intersection-label" transform={`translate(${node.x} ${Number(node.y) - 55})`}>
-                  <rect x="-42" y="-13" width="84" height="22" rx="8" />
-                  <text textAnchor="middle" y="2">{config.label || id} · F{state.phaseIndex ?? '—'}</text>
-                </g>
-              </g>
-            );
-          })}
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const ctx = canvas.getContext('2d');
+    let raf = 0;
+    let disposed = false;
 
-          {vehicles.map((vehicle) => {
-            const pose = vehiclePose(vehicle, network);
-            const isBus = vehicle.kind === 'BUS';
-            const routeClass = isBus ? `route-${String(vehicle.routeId || '').toLowerCase()}` : '';
-            return (
-              <g
-                key={vehicle.id}
-                className={`moving-vehicle ${isBus ? `bus-vehicle ${routeClass} status-${vehicle.status || 'normal'}` : 'car-vehicle'}`}
-                style={{ transform: `translate(${pose.x}px, ${pose.y}px) rotate(${pose.angle}deg)` }}
-                onClick={() => setSelected({ type: 'vehicle', ...vehicle })}
-              >
-                {isBus ? <><rect x="-11" y="-5.5" width="22" height="11" rx="3" /><rect className="vehicle-window" x="-5" y="-3.5" width="8" height="7" rx="1" /><circle cx="-6" cy="6" r="2" /><circle cx="7" cy="6" r="2" /></> : <><rect x="-6" y="-3.5" width="12" height="7" rx="2.5" /><rect className="vehicle-window" x="-1" y="-2.5" width="4" height="5" rx="1" /></>}
-              </g>
-            );
-          })}
-        </svg>
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(640, rect.width);
+      const height = Math.max(420, rect.height);
+      if (canvas.width !== Math.round(width*dpr) || canvas.height !== Math.round(height*dpr)) {
+        canvas.width = Math.round(width*dpr); canvas.height = Math.round(height*dpr);
+      }
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      return { width, height };
+    };
 
-        <div className="sim-legend"><span><i className="legend-car" /> Auto</span><span><i className="legend-b1" /> Bus B1 →</span><span><i className="legend-b2" /> Bus B2 ←</span><span><i className="legend-stop" /> Paradero</span></div>
-        <div className="signal-legend"><span><i className="red" /> Rojo</span><span><i className="yellow" /> Amarillo</span><span><i className="green" /> Verde</span></div>
+    const draw = (now) => {
+      if (disposed) return;
+      const { width, height } = resize();
+      const network = topologyRef.current?.network;
+      const bounds = boundsFor(network);
+      const margin = 55;
+      const scale = Math.min((width-2*margin)/Math.max(1,bounds.maxX-bounds.minX), (height-2*margin)/Math.max(1,bounds.maxY-bounds.minY));
+      const ox = (width-(bounds.maxX-bounds.minX)*scale)/2 - bounds.minX*scale;
+      const oy = (height-(bounds.maxY-bounds.minY)*scale)/2 - bounds.minY*scale;
+      const screen = (x,y) => [ox+Number(x)*scale, oy+Number(y)*scale];
 
-        {selected && <aside className="sim-inspector"><button type="button" onClick={() => setSelected(null)}>×</button>{selected.type === 'vehicle' && <><span className="eyebrow">{selected.kind === 'BUS' ? 'Bus' : 'Auto'}</span><h3>{selected.id}</h3><dl><div><dt>Velocidad</dt><dd>{Number(selected.speedMps || 0).toFixed(1)} m/s</dd></div><div><dt>Tramo</dt><dd>{selected.linkId}</dd></div>{selected.kind === 'BUS' && <div><dt>Recorrido</dt><dd>{selected.routeId}</dd></div>}{selected.kind === 'BUS' && <div><dt>Estado</dt><dd>{statusLabel(selected.status)}</dd></div>}{selected.kind === 'BUS' && <div><dt>Headway</dt><dd>{selected.headwayS == null ? '—' : `${Number(selected.headwayS).toFixed(0)} s`}</dd></div>}</dl></>}{selected.type === 'intersection' && <><span className="eyebrow">Intersección</span><h3>{selected.config.label || selected.id}</h3><dl><div><dt>Fase actual</dt><dd>F{selected.state.phaseIndex ?? '—'}</dd></div><div><dt>DQN pidió</dt><dd>F{selected.state.selectedPhase ?? '—'}</dd></div><div><dt>Modo</dt><dd>{selected.state.mode || '—'}</dd></div><div><dt>Tiempo</dt><dd>{Number(selected.state.elapsedS || 0).toFixed(1)} s</dd></div></dl></>}{selected.type === 'stop' && <><span className="eyebrow">Paradero</span><h3>{selected.id}</h3><p>{selected.routes?.join(', ')}</p></>}</aside>}
-      </div>
-    </div>
-  );
+      ctx.clearRect(0,0,width,height);
+      ctx.fillStyle='#0a1018'; ctx.fillRect(0,0,width,height);
+
+      // Calles: una calzada con dos pistas, una por cada sentido.
+      ctx.lineCap='butt';
+      for (const road of roads) {
+        const [x1,y1]=screen(road.a.x,road.a.y), [x2,y2]=screen(road.b.x,road.b.y);
+        ctx.strokeStyle='#273241'; ctx.lineWidth=34; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        ctx.strokeStyle='#657081'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        ctx.save(); ctx.setLineDash([9,9]); ctx.strokeStyle='#e6c95c'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.restore();
+      }
+
+      // Flechas de sentido en cada link dirigido.
+      for (const link of Object.values(network?.links || {})) {
+        const a=network.nodes[link.from], b=network.nodes[link.to]; if(!a||!b) continue;
+        const ax=Number(a.x), ay=Number(a.y), bx=Number(b.x), by=Number(b.y);
+        const dx=bx-ax, dy=by-ay, len=Math.hypot(dx,dy)||1, ux=dx/len, uy=dy/len, nx=-uy, ny=ux;
+        const wx=ax+dx*.45+nx*3.2, wy=ay+dy*.45+ny*3.2; const [sx,sy]=screen(wx,wy);
+        ctx.save(); ctx.translate(sx,sy); ctx.rotate(Math.atan2(dy,dx)); ctx.fillStyle='rgba(235,241,248,.55)'; ctx.beginPath(); ctx.moveTo(8,0);ctx.lineTo(-5,-4);ctx.lineTo(-5,4);ctx.closePath();ctx.fill();ctx.restore();
+      }
+
+      // Cuadrados de intersección y etiquetas.
+      for (const [iid, config] of Object.entries(network?.intersections || {})) {
+        const node=network.nodes[iid]; if(!node) continue; const [cx,cy]=screen(node.x,node.y); const half=12*scale;
+        ctx.fillStyle='#344252'; ctx.fillRect(cx-half,cy-half,half*2,half*2);
+        ctx.strokeStyle='#778394'; ctx.lineWidth=1; ctx.strokeRect(cx-half,cy-half,half*2,half*2);
+        ctx.fillStyle='#eef4fb'; ctx.font='700 12px system-ui'; ctx.textAlign='center'; ctx.fillText(config.label || iid,cx,cy-half-12);
+      }
+
+      // Paraderos.
+      for (const [stopId, stop] of Object.entries(network?.stops || {})) {
+        const link=network.links[stop.link]; if(!link) continue; const a=network.nodes[link.from], b=network.nodes[link.to];
+        const len=Number(link.length_m)||1, t=Number(stop.position_m)/len; const wx=Number(a.x)+(Number(b.x)-Number(a.x))*t, wy=Number(a.y)+(Number(b.y)-Number(a.y))*t;
+        const [sx,sy]=screen(wx,wy); ctx.fillStyle='#53d4ff'; ctx.fillRect(sx-3,sy-9,6,18); ctx.fillStyle='#bdefff'; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.fillText('P',sx+6,sy-5);
+      }
+
+      const target=targetRef.current; const previous=previousRef.current || target;
+      const durationMs=Math.max(80, Number(target?.trafficRules?.dtS || .2)*1000);
+      const alpha=Math.max(0,Math.min(1,(now-receivedAtRef.current)/durationMs));
+      const prevMap=vehicleMap(previous);
+
+      // Líneas de detención y cabezales de 3 luces. Se usan coordenadas generadas por Python.
+      for (const state of Object.values(target?.intersections || {})) {
+        for (const head of state.signalHeads || []) {
+          const [sx,sy]=screen(head.x,head.y); const angle=Number(head.headingDeg||0)*Math.PI/180;
+          ctx.save(); ctx.translate(sx,sy); ctx.rotate(angle); ctx.strokeStyle='#ffffff'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(0,-9);ctx.lineTo(0,9);ctx.stroke(); ctx.restore();
+          const off=22, px=sx+Math.cos(angle+Math.PI/2)*off, py=sy+Math.sin(angle+Math.PI/2)*off;
+          ctx.save(); ctx.translate(px,py); ctx.fillStyle='#070a0e'; ctx.strokeStyle='#7d8794'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(-8,-24,16,48,5);ctx.fill();ctx.stroke();
+          ['RED','YELLOW','GREEN'].forEach((color,index)=>{const yy=-15+index*15; ctx.beginPath();ctx.arc(0,yy,5,0,Math.PI*2);ctx.fillStyle=head.color===color?SIGNAL_RGB[color]:'#252b33';ctx.shadowColor=head.color===color?SIGNAL_RGB[color]:'transparent';ctx.shadowBlur=head.color===color?10:0;ctx.fill();ctx.shadowBlur=0;});
+          ctx.fillStyle='#dce5ef';ctx.font='700 9px system-ui';ctx.textAlign='center';ctx.fillText(BRANCH_SHORT[head.branch]||head.branch,0,34); ctx.restore();
+        }
+      }
+
+      // Vehículos: la coordenada recibida es el parachoques delantero.
+      for (const vehicle of target?.vehicles || []) {
+        const prev=prevMap.get(vehicle.id) || vehicle;
+        const wx=Number(prev.x)+(Number(vehicle.x)-Number(prev.x))*alpha;
+        const wy=Number(prev.y)+(Number(vehicle.y)-Number(prev.y))*alpha;
+        const heading=Number(prev.headingDeg)+(Number(vehicle.headingDeg)-Number(prev.headingDeg))*alpha;
+        const [sx,sy]=screen(wx,wy); const isBus=vehicle.kind==='BUS';
+        const length=Math.max(isBus?24:13,Number(vehicle.lengthM||4.5)*scale);
+        const bodyWidth=Math.max(isBus?9:7,Number(vehicle.widthM||1.8)*scale);
+        ctx.save();ctx.translate(sx,sy);ctx.rotate(heading*Math.PI/180);
+        ctx.fillStyle=isBus?(vehicle.routeId==='B2'?'#ff9f43':'#2dd4bf'):'#4da3ff';
+        ctx.strokeStyle=vehicle.status==='critico_bunching'?'#ff3d4f':'#07111c';ctx.lineWidth=vehicle.status==='critico_bunching'?3:1.5;
+        ctx.beginPath();ctx.roundRect(-length,-bodyWidth/2,length,bodyWidth,Math.min(4,bodyWidth/2));ctx.fill();ctx.stroke();
+        if(isBus){ctx.fillStyle='rgba(235,248,255,.85)';for(let x=-length+5;x<-3;x+=7)ctx.fillRect(x,-bodyWidth/2+2,4,2);}
+        ctx.restore();
+        if(isBus){ctx.fillStyle='#f3f7fb';ctx.font='700 10px system-ui';ctx.textAlign='center';ctx.fillText(vehicle.id,sx,sy-11); if(Number(vehicle.dwellRemainingS)>0){ctx.fillStyle='#53d4ff';ctx.fillText('PARADERO',sx,sy+18);}}
+      }
+
+      // Indicador de que el canvas está recibiendo frames verdaderos.
+      ctx.fillStyle='rgba(5,9,14,.82)';ctx.fillRect(14,14,238,62);ctx.fillStyle='#f4f7fb';ctx.textAlign='left';ctx.font='700 13px system-ui';ctx.fillText(target?`t = ${Number(target.timeS||0).toFixed(1)} s`:'Esperando simulación…',26,37);
+      ctx.font='11px system-ui';ctx.fillStyle='#9fb0c2';ctx.fillText(`Frame #${frameSequence} · ${connectionStatus==='live'?'SSE conectado':'sin stream'}`,26,58);
+
+      raf=requestAnimationFrame(draw);
+    };
+    raf=requestAnimationFrame(draw);
+    return()=>{disposed=true;cancelAnimationFrame(raf);};
+  }, [roads, connectionStatus, frameSequence]);
+
+  return <div className="traffic-canvas-shell"><canvas ref={canvasRef}/><div className="canvas-legend"><span><i className="car"/>Auto</span><span><i className="bus b1"/>Bus B1</span><span><i className="bus b2"/>Bus B2</span><span><i className="stop"/>Paradero</span></div></div>;
 }

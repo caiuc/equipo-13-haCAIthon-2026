@@ -25,26 +25,20 @@ from simulacion.trafico.multi_agent_environment import MultiAgentTrafficEnv
 SCENARIO_ROOT = SRC_ROOT / "config" / "scenarios"
 OUTPUT_ROOT = BACKEND_ROOT / "outputs" / "model_runs"
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
-RUNNING = True
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("live-simulation")
 
+RUNNING = True
 
-def _stop(*_):
+
+def _stop(_signum, _frame):
     global RUNNING
     RUNNING = False
 
 
-def _safe_path(root: Path, name: str, must_exist: bool = True) -> Path:
-    if not SAFE_NAME.fullmatch(name):
-        raise ValueError("Nombre inseguro")
-    path = (root / name).resolve()
-    if path.parent != root.resolve():
-        raise ValueError("Ruta insegura")
-    if must_exist and not path.exists():
-        raise FileNotFoundError(name)
-    return path
+signal.signal(signal.SIGTERM, _stop)
+signal.signal(signal.SIGINT, _stop)
 
 
 def emit(payload: dict) -> None:
@@ -52,125 +46,148 @@ def emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
-def _pace_realtime(wall_started: float, simulated_elapsed_s: float, realtime_factor: float) -> None:
-    """Sincroniza el reloj microscópico con el reloj real.
+def read_request() -> dict:
+    raw = sys.stdin.readline()
+    if not raw.strip():
+        raise ValueError("No se recibió configuración para la simulación")
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("La configuración debe ser un objeto JSON")
+    return payload
 
-    A 1x, 0,2 s simulados se muestran cada ~0,2 s reales. El tiempo usado en
-    cálculo/serialización se descuenta del sleep para evitar deriva acumulada.
-    """
-    expected_wall_elapsed = simulated_elapsed_s / realtime_factor
-    remaining = expected_wall_elapsed - (time.monotonic() - wall_started)
-    if remaining > 0:
-        time.sleep(remaining)
+
+def scenario_path(name: str) -> Path:
+    if not SAFE_NAME.fullmatch(name):
+        raise ValueError("Nombre de escenario inválido")
+    path = (SCENARIO_ROOT / name).resolve()
+    if path.parent != SCENARIO_ROOT.resolve() or not path.is_file():
+        raise FileNotFoundError(f"Escenario no encontrado: {name}")
+    return path
+
+
+def checkpoint_dir(run_id: str) -> Path:
+    if not SAFE_NAME.fullmatch(run_id):
+        raise ValueError("checkpointRunId inválido")
+    path = (OUTPUT_ROOT / run_id).resolve()
+    if path.parent != OUTPUT_ROOT.resolve() or not path.is_dir():
+        raise FileNotFoundError(f"Checkpoint no encontrado: {run_id}")
+    return path
 
 
 def main() -> int:
-    signal.signal(signal.SIGTERM, _stop)
-    signal.signal(signal.SIGINT, _stop)
     try:
-        raw = sys.stdin.readline()
-        parameters = json.loads(raw or "{}")
-        scenario_name = str(parameters.get("scenario", "example_network.yaml"))
-        run_id = str(parameters.get("checkpointRunId", ""))
+        params = read_request()
+        scenario_name = str(params.get("scenario", "example_network.yaml"))
+        run_id = str(params.get("checkpointRunId", ""))
         if not run_id:
             raise ValueError("checkpointRunId es obligatorio")
+        cycle_seconds = float(params.get("cycleSeconds", 600.0))
+        real_time_factor = float(params.get("realTimeFactor", 1.0))
+        if cycle_seconds < 30 or cycle_seconds > 86400:
+            raise ValueError("cycleSeconds debe estar entre 30 y 86400")
+        if real_time_factor < 0.25 or real_time_factor > 8:
+            raise ValueError("realTimeFactor debe estar entre 0.25 y 8")
 
-        scenario_path = _safe_path(SCENARIO_ROOT, scenario_name)
-        checkpoint_path = _safe_path(OUTPUT_ROOT, run_id)
-        cfg = load_config(scenario_path)
-        logic = ClingoTopologyEngine(extra_program=parameters.get("clingoProgram")).solve(cfg)
+        cfg = load_config(scenario_path(scenario_name))
+        logic = ClingoTopologyEngine(extra_program=params.get("clingoProgram")).solve(cfg)
+        env = MultiAgentTrafficEnv(cfg, logic, episode_seconds=cycle_seconds)
+        observations = env.reset()
+        group = AgentGroup(env, logic, cfg, seed=int(cfg["simulation"].get("seed", 42)) + 1000)
+        if not group.load(checkpoint_dir(run_id)):
+            raise FileNotFoundError("No están todos los checkpoints DQN del run seleccionado")
 
-        cycle_seconds = float(parameters.get("cycleSeconds", 1800.0))
-        realtime_factor = max(0.25, min(4.0, float(parameters.get("realTimeFactor", 1.0))))
-        base_seed = int(cfg["simulation"].get("seed", 42))
-        cycle = 0
         frame_sequence = 0
         decision_sequence = 0
+        cycle = 1
+        metric_collector = MetricsCollector(cfg)
+        next_frame_deadline = time.perf_counter()
+
+        emit({
+            "type": "cycle",
+            "cycle": cycle,
+            "simulationDtS": env.dt_s,
+            "decisionIntervalS": env.decision_interval_s,
+            "realTimeFactor": real_time_factor,
+            "snapshot": build_network_snapshot(cfg, env),
+        })
 
         while RUNNING:
-            cfg["simulation"]["seed"] = base_seed + cycle * 97
-            env = MultiAgentTrafficEnv(cfg, logic, cycle_seconds)
-            obs = env.reset()
-            group = AgentGroup(env, logic, cfg, seed=100 + cycle)
-            if not group.load(checkpoint_path):
-                raise FileNotFoundError(f"Checkpoint incompleto: {run_id}")
-
-            collector = MetricsCollector(cfg)
-            cycle_started_wall = time.monotonic()
-            decision_context = None
-            decision_end_s = 0.0
-            current_actions = {iid: 0 for iid in env.controllers}
-            current_rewards = {iid: 0.0 for iid in env.controllers}
-            next_metrics_at_s = 0.0
-
+            masks = env.action_masks()
+            actions = group.select_actions(observations, masks, training=False)
+            decision_sequence += 1
             emit({
-                "type": "cycle",
-                "cycle": cycle + 1,
-                "runId": run_id,
-                "realTimeFactor": realtime_factor,
-                "simulationDtS": env.network.dt,
-                "decisionIntervalS": env.decision_interval,
+                "type": "decision",
+                "sequence": decision_sequence,
+                "cycle": cycle,
+                "timeS": env.sim_time_s,
+                "actions": actions,
+                "masks": masks,
                 "snapshot": build_network_snapshot(cfg, env),
             })
 
-            while RUNNING and env.network.time_s < cycle_seconds:
-                # El DQN decide solo al inicio de cada intervalo de decisión.
-                # Entre decisiones el simulador avanza a dt=0,2 s y cada micro-paso
-                # se transmite al navegador.
-                if decision_context is None:
-                    current_actions = group.select_actions(obs, env.action_masks(), training=False)
-                    decision_context = env.begin_decision(current_actions)
-                    decision_end_s = min(cycle_seconds, env.network.time_s + env.decision_interval)
-                    decision_sequence += 1
-                    emit({
-                        "type": "decision",
-                        "sequence": decision_sequence,
-                        "cycle": cycle + 1,
-                        "timeS": env.network.time_s,
-                        "actions": current_actions,
-                        "actionMasks": env.action_masks(),
-                        "snapshot": build_network_snapshot(cfg, env),
-                    })
-
-                env.advance_micro_step()
-
-                # Cierra recompensa/observación al completar los 5 s del DQN.
-                if env.network.time_s + 1e-9 >= decision_end_s:
-                    obs, current_rewards, _, _ = env.finish_decision(decision_context)
-                    collector.sample(env, current_rewards)
-                    decision_context = None
-
-                # Pacing 1:1: el frame de t=0,2 aparece a los ~0,2 s reales.
-                _pace_realtime(cycle_started_wall, env.network.time_s, realtime_factor)
+            def on_substep(current_env):
+                nonlocal frame_sequence, next_frame_deadline
+                if not RUNNING:
+                    return False
                 frame_sequence += 1
-                frame = {
+                snapshot = build_network_snapshot(cfg, current_env)
+                emit({
                     "type": "frame",
                     "frameSequence": frame_sequence,
                     "decisionSequence": decision_sequence,
-                    "cycle": cycle + 1,
-                    "controller": "dqn-realtime",
-                    "realTimeFactor": realtime_factor,
-                    "simulationDtS": env.network.dt,
-                    "decisionIntervalS": env.decision_interval,
-                    "actions": current_actions,
-                    "rewards": current_rewards,
+                    "cycle": cycle,
+                    "simulationDtS": current_env.dt_s,
+                    "decisionIntervalS": current_env.decision_interval_s,
+                    "realTimeFactor": real_time_factor,
+                    "snapshot": snapshot,
+                })
+                next_frame_deadline += current_env.dt_s / real_time_factor
+                delay = next_frame_deadline - time.perf_counter()
+                if delay > 0:
+                    time.sleep(delay)
+                else:
+                    next_frame_deadline = time.perf_counter()
+                return RUNNING
+
+            observations, rewards, done, info = env.step(actions, on_substep=on_substep)
+            if not RUNNING:
+                break
+            emit({
+                "type": "decision_result",
+                "sequence": decision_sequence,
+                "cycle": cycle,
+                "timeS": env.sim_time_s,
+                "actions": actions,
+                "rewards": rewards,
+                "rewardBreakdown": info.get("rewardBreakdown", {}),
+                "metrics": metric_collector.summarize(env),
+                "snapshot": build_network_snapshot(cfg, env),
+            })
+
+            if done:
+                emit({
+                    "type": "cycle_complete",
+                    "cycle": cycle,
+                    "metrics": metric_collector.summarize(env),
                     "snapshot": build_network_snapshot(cfg, env),
-                }
-                if env.network.time_s + 1e-9 >= next_metrics_at_s:
-                    frame["metrics"] = collector.summarize(env)
-                    next_metrics_at_s = env.network.time_s + 1.0
-                emit(frame)
+                })
+                cycle += 1
+                observations = env.reset(seed=int(cfg["simulation"].get("seed", 42)) + cycle)
+                next_frame_deadline = time.perf_counter()
+                emit({
+                    "type": "cycle",
+                    "cycle": cycle,
+                    "simulationDtS": env.dt_s,
+                    "decisionIntervalS": env.decision_interval_s,
+                    "realTimeFactor": real_time_factor,
+                    "snapshot": build_network_snapshot(cfg, env),
+                })
 
-            if decision_context is not None:
-                obs, current_rewards, _, _ = env.finish_decision(decision_context)
-                collector.sample(env, current_rewards)
-
-            cycle += 1
-
-        emit({"type": "stopped", "frameSequence": frame_sequence, "decisionSequence": decision_sequence, "cycles": cycle})
+        emit({"type": "stopped", "cycle": cycle, "frameSequence": frame_sequence, "decisionSequence": decision_sequence})
         return 0
     except Exception as error:
-        logger.error("%s", traceback.format_exc())
+        logger.error("live simulation failed: %s", error)
+        logger.debug("%s", traceback.format_exc())
         emit({"type": "error", "error": {"code": type(error).__name__.upper(), "message": str(error)}})
         return 1
 

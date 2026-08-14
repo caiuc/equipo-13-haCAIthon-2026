@@ -137,3 +137,66 @@ Hacer que la demo live represente el avance microscópico real de la simulación
 - El escenario demo crea tráfico desde el primer micro-paso (`spawn_immediately`) y ambos recorridos B1/B2 parten en `t=0`.
 - Los tiempos semafóricos de demo permiten observar transiciones en pocos segundos manteniendo mínimo verde, amarillo obligatorio y máximo de rojo.
 - Agregadas pruebas que verifican movimiento real de autos/buses entre micro-pasos y transición visible GREEN → YELLOW → RED/GREEN por rama.
+
+## 2026-08-14 — Reglas físicas de tránsito, línea de detención y no solapamiento
+
+### Objetivo
+Asegurar que la simulación en tiempo real represente colas y cruces físicamente coherentes: los vehículos deben detenerse antes de la caja de la intersección, obedecer rojo/amarillo, mantener distancia y no bloquear ni solaparse dentro del cruce.
+
+### Cambios principales
+- `position_m` se trata explícitamente como la posición del parachoques delantero.
+- Añadida línea de detención física antes del cuadrado de cada intersección (`stop_line_clearance_m`).
+- Rojo y amarillo impiden nuevas entradas; un vehículo que entró legalmente con verde conserva derecho a despejar la caja.
+- Añadida ocupación de intersección por movimiento: movimientos Clingo conflictivos nunca ocupan simultáneamente la caja; como fail-safe, sin lógica Clingo disponible se permite una sola trayectoria dentro del cruce.
+- Añadida regla "no bloquear la caja": un vehículo solo entra si existe espacio suficiente en el link de salida para abandonar completamente la intersección.
+- El flujo de capacidad se aplica al cruce de la línea de detención, no al centro de la intersección.
+- Añadida separación mínima absoluta por carril además del frenado Gipps, como protección frente a errores de integración discreta.
+- Autos y buses solo se generan cuando existe espacio en el carril de origen; si no, permanecen esperando fuera de la red.
+- La asignación de carril ahora proviene del movimiento real (`left` o `through/right`) y se transmite en telemetría; React dejó de elegir carriles mediante hash visual.
+- El SVG dibuja líneas de detención blancas y los cuerpos de vehículos quedan anclados por su frente, haciendo visible que se detienen antes del cuadrado.
+
+### Parámetros de escenario
+- `minimum_vehicle_gap_m: 2.5`
+- `stop_line_clearance_m: 4.0`
+- `intersection_exit_clearance_m: 1.0`
+
+### Validaciones
+- `PYTHONPATH=src python3 -m pytest -q`: 23 aprobados, 1 omitido únicamente por ausencia de `clingo` en el sandbox.
+- Prueba de estrés de 1200 micro-pasos con tráfico acumulado: distancia mínima observada 2,5 m, 0 solapamientos tanto con paso bloqueado como habilitado.
+- Parseo JSX de `NetworkVisualization.jsx` mediante TypeScript: correcto.
+- `python3 -m compileall -q src`: correcto.
+
+## 2026-08-14 — Reconstrucción del motor basada en `Empresa.zip`
+
+### Motivo
+Las versiones previas separaban excesivamente el ciclo de simulación del ciclo visual y acumularon módulos alternativos que hacían difícil demostrar que el checkpoint entrenado controlaba exactamente la misma física mostrada en pantalla. Se reconstruyó el núcleo siguiendo el patrón funcional observado en el proyecto de referencia entregado por el equipo.
+
+### Decisión arquitectónica principal
+- Existe un único `MultiAgentTrafficEnv` para entrenamiento, evaluación, baseline y live.
+- `env.step(actions, on_substep)` ejecuta 25 subpasos físicos de 0,2 s por cada decisión de 5 s.
+- El callback se ejecuta sobre el estado real después de cada subpaso; el renderer no posee simulación propia.
+- `live_simulation.py` carga los mismos checkpoints producidos por `train.py` y usa el mismo `env.step()`.
+
+### Cambios
+- Reescrita la dinámica alrededor de `RoadLane`, Gipps, líneas de detención e `IntersectionTransit`.
+- Reescrito `SignalController` tomando como modelo el ciclo verde mínimo → amarillo obligatorio → nueva fase.
+- Reescritos DQN y `AgentGroup` con replay buffer, epsilon-greedy, target network, Huber, Adam, clipping y action masking.
+- Simplificado el escenario estable a dos cruces de cuatro vías conectados y una pista por sentido; el escenario actual usa movimientos rectos para validar el ciclo completo antes de escalar geometría.
+- Buses B1/B2 despachados sobre el mismo motor de carriles, con paraderos, dwell y headway.
+- Reescrita telemetría: Python entrega coordenadas y orientación de vehículos/cabezales; React Canvas solo dibuja.
+- Eliminados módulos heredados no utilizados (`TrafficNetwork` anterior, state encoder/replay alternativos y servicios viejos de headway/reward/stop/GPS) para impedir que coexistieran dos motores distintos.
+- Reescrita documentación para reflejar el flujo real.
+
+### Validaciones realizadas
+- `python3 -m compileall -q src`: correcto.
+- `pytest -q`: 9 aprobados y 1 omitido únicamente cuando `clingo` no está disponible en el entorno de validación.
+- Prueba de microframes: 25 callbacks por decisión, tiempos 0,2 ... 5,0 s y posiciones diferentes entre frames.
+- Prueba de semáforos: transición GREEN → YELLOW → nueva fase GREEN.
+- Prueba de tráfico: stop line en rojo, separación mínima y exclusión de tránsitos conflictivos.
+- Prueba de buses: segundo despacho y cálculo de headway.
+- Prueba DQN: replay efectivo, loss no nulo, guardado de `i1.pt`/`i2.pt` y carga posterior para inferencia.
+- `node --check` en backend: correcto.
+- Parseo JSX del frontend: correcto.
+
+### Limitación de validación del sandbox
+No se pudo ejecutar el solve real de Clingo ni un build Vite completo si las dependencias no estaban disponibles localmente en el sandbox. El test de contrato ASP permanece preparado para ejecutarse cuando `clingo` esté instalado desde `backend/requirements.txt`.

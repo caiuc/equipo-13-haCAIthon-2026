@@ -1,36 +1,38 @@
-# Trazabilidad del prompt maestro
+# Trazabilidad — reconstrucción funcional
 
-| Requisito | Implementación principal |
+| Requisito | Implementación actual |
 |---|---|
-| Clingo como fuente formal de legalidad | `backend/src/ia/clingo/rules.lp`, `asp_engine.py` |
-| Topología N-intersecciones paramétrica | `backend/src/config/scenario_loader.py`, escenarios YAML, `ia/clingo/geometry.py` |
-| Movimientos desde carriles y giros | `lane_allows + turn_target -> movement` en ASP |
-| Conflictos no hardcodeados por cruce | `occupies(...,zone)` + regla ASP `conflict` |
-| Mínimo de fases legales | coloración ASP + `#minimize` |
-| Sin control directo de luces por RL | DQN elige índice de `Phase` |
-| Mínimo verde, amarillo, rojo máximo | `simulacion/trafico/signal_controller.py` |
-| Action masking | `SignalController.action_mask`, `ia/modelos/dqn.py` |
-| Peatones fuera de percepción RL | sin features peatonales; mínimo fijo en señales |
-| Microsimulación Gipps | `simulacion/vehiculos/gipps.py`, `simulacion/trafico/network.py` |
-| Poisson por origen | `TrafficNetwork._car_next_spawn` por origen |
-| Ruta completa por vehículo | `simulacion/rutas/route_planner.py`, `Vehicle.route_links` |
-| Rutas físicamente posibles | `RoutePlanner.is_legal_link_route` contra movimientos Clingo |
-| Clase BUS separada | `common/domain_models.py` |
-| GPS bus | `simulacion/percepcion/gps.py` |
-| Paraderos y dwell uniforme | `simulacion/paraderos/stop_manager.py` |
-| Headway continuo y tendencia | `simulacion/buses/headway.py` |
-| Penalización progresiva bunching | `HeadwayTracker.progressive_penalty` |
-| Prioridad/retención aprendible | estado + recompensa + selección de fases |
-| Cámara ROI 60 m | `simulacion/percepcion/camera.py` |
-| Comunicación entre vecinos | `simulacion/comunicacion/message_bus.py`, `NeighborMessage` |
-| DQN 128x128/ReLU | `ia/modelos/dqn.py`, YAML |
-| replay/epsilon/target/Huber/Adam/clipping | `ia/modelos/dqn.py`, `replay_buffer.py` |
-| Agentes independientes | `ia/modelos/agent_group.py` modo `independent` |
-| Parámetros compartidos | `ia/modelos/agent_group.py` modo `shared` |
-| Recompensa bus-first | `simulacion/recompensas/reward_calculator.py`, pesos YAML |
-| Vista global | `frontend/src/visualization/NetworkVisualization.jsx` |
-| Telemetría y métricas | `simulacion/telemetria`, `simulacion/metricas` |
-| Procesos largos como jobs | `backend/src/services/traffic-job.service.js` |
-| Ejecución segura Python | `backend/src/services/python-process.service.js` |
-| JSON Node ↔ Python | `backend/src/ia/scripts/bridge.py` |
-| Cambiar topología sin reescribir agente | YAML + reejecución de Clingo |
+| Clingo como fuente formal de fases legales | `backend/src/ia/clingo/asp_engine.py`, `rules.lp` |
+| Topología por configuración | `backend/src/config/scenario_loader.py`, `config/scenarios/example_network.yaml` |
+| DQN no controla luces individuales | `ia/modelos/dqn.py` + `SignalController` |
+| Action masking | `SignalController.legal_action_mask()` + `DQNAgent.select_action()` |
+| Verde mínimo / amarillo obligatorio / rojo máximo | `simulacion/trafico/signal_controller.py` |
+| Paso microscópico de 0,2 s | `MultiAgentTrafficEnv.dt_s` |
+| Decisión cada 5 s | `MultiAgentTrafficEnv.decision_interval_s` |
+| 25 subpasos físicos por decisión | `MultiAgentTrafficEnv.step()` |
+| Entrenamiento y live usan el mismo entorno | `train.py`, `live_simulation.py`, ambos con `MultiAgentTrafficEnv` |
+| Gipps | `simulacion/vehiculos/gipps.py` |
+| Línea de detención en rojo | `MultiAgentTrafficEnv` + `gipps.update_vehicle()` |
+| No solapamiento por carril | orden/limitación en `RoadLane` + invariant tests |
+| Cruce físico progresivo | `IntersectionTransit` en `common/domain_models.py` y `MultiAgentTrafficEnv` |
+| Exclusión de movimientos conflictivos | `IntersectionLogic.conflicts` + control de entrada a caja |
+| No bloquear salida | comprobación de espacio en `RoadLane.can_accept_from_intersection()` |
+| Generación estocástica de autos | `MultiAgentTrafficEnv` |
+| Rutas | `simulacion/rutas/route_planner.py` |
+| BUS como clase separada | `common/domain_models.py` |
+| Buses B1/B2, headway, dwell | `MultiAgentTrafficEnv` + escenario YAML |
+| Cámara ROI | `simulacion/percepcion/camera.py` |
+| Información de vecinos | resumen incorporado en `MultiAgentTrafficEnv._observation()` |
+| Estado fijo por agente | `MultiAgentTrafficEnv.observation()` |
+| DQN 128×128 + ReLU | `ia/modelos/dqn.py` |
+| Replay / epsilon / target / Huber / Adam / clipping | `ia/modelos/dqn.py` |
+| Agente por intersección | `ia/modelos/agent_group.py` |
+| Recompensa bus-first | `MultiAgentTrafficEnv._rewards()` + pesos YAML |
+| Checkpoints recargables | `DQNAgent.save/load`, `AgentGroup.save/load` |
+| Frame real después de cada subpaso | `env.step(..., on_substep=...)` |
+| Streaming real | `ia/scripts/live_simulation.py` → NestJS SSE → React |
+| Frontend sin física | `frontend/src/visualization/NetworkVisualization.jsx` |
+| Cuatro cabezales por cruce | `telemetria/snapshot.py` + Canvas |
+| JSON Node ↔ Python | `ia/scripts/bridge.py` |
+| Procesos Python centralizados | `backend/src/services/python-process.service.js` |
+| Entrenamientos como jobs | `backend/src/services/traffic-job.service.js` |

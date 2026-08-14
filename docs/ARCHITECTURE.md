@@ -1,224 +1,235 @@
-# Arquitectura técnica integrada
+# Arquitectura — versión basada en el entorno de referencia
 
-La implementación respeta la arquitectura definida por `AGENTS.md`: React visualiza, NestJS orquesta y Python concentra simulación, razonamiento lógico y aprendizaje reforzado.
+## Principio rector
 
-## Flujo de datos
+La simulación posee una sola fuente de verdad: `MultiAgentTrafficEnv`.
 
-```text
-React / Vite
-   ↓ HTTP JSON
-NestJS Controller
-   ↓
-TrafficControlService
-   ↓
-TrafficJobService (procesos largos)
-   ↓
-PythonProcessService / spawn()
-   ↓ JSON stdin/stdout
-backend/src/ia/scripts/bridge.py
-   ↓
-Configuración YAML
-   ↓
-Geometry preprocessor → turn_target + occupies(zone)
-   ↓
-Clingo / ASP
-   ├─ movement(...)
-   ├─ conflict(...)
-   ├─ in_phase(...)
-   └─ signal(...)
-   ↓
-SignalController
-   ├─ mínimo verde / mínimo peatonal fijo
-   ├─ amarillo obligatorio
-   ├─ rojo máximo
-   └─ comprobación de seguridad en runtime
-   ↓
-TrafficNetwork (dt configurable, 0.2 s por defecto)
-   ├─ Gipps
-   ├─ generación Poisson
-   ├─ capacidad por movimiento
-   ├─ buses y paraderos
-   └─ rutas completas restringidas a movimientos legales
-   ↓
-Cámara ROI + GPS buses + mensajes de vecinos
-   ↓
-StateEncoder
-   ↓
-DQN independiente o compartido
-   ↓
-action masking
-   ↓
-índice de fase legal
-   ↓
-recompensa + replay buffer + target network
-   ↓
-métricas + snapshot JSON
-   ↓
-NestJS
-   ↓
-React/SVG
-```
+El mismo objeto conceptual se usa en:
 
-## Límites por carpeta
+- entrenamiento;
+- evaluación;
+- baseline;
+- simulación live.
 
-- `backend/src/ia/clingo`: legalidad topológica y semafórica.
-- `backend/src/ia/modelos`: DQN, replay buffer, grupo de agentes y codificación de estado.
-- `backend/src/ia/entrenamiento`: entrenamiento y evaluación.
-- `backend/src/ia/scripts`: adaptadores ejecutables por NestJS.
-- `backend/src/simulacion/trafico`: entorno multiagente, red y controlador temporal.
-- `backend/src/simulacion/vehiculos`: dinámica de Gipps.
-- `backend/src/simulacion/buses`: headway, tendencia y clasificación operacional.
-- `backend/src/simulacion/paraderos`: dwell estocástico.
-- `backend/src/simulacion/rutas`: planificación de rutas.
-- `backend/src/simulacion/percepcion`: cámara y GPS.
-- `backend/src/simulacion/comunicacion`: mensajes entre intersecciones.
-- `backend/src/simulacion/recompensas`: recompensa bus-first.
-- `backend/src/simulacion/metricas`: agregación de KPI.
-- `backend/src/simulacion/telemetria`: DTOs de topología y estado para el frontend.
-- `frontend/src/visualization`: representación SVG; no contiene lógica científica.
+El renderer no modifica el estado y no contiene física.
 
-## Invariante de seguridad
-
-Una fase puede llegar a verde solamente si:
-
-1. Clingo generó la fase a partir de movimientos derivados de infraestructura.
-2. La fase no contiene conflictos derivados por ASP.
-3. El action mask la habilita bajo las restricciones temporales.
-4. `SignalController.request_phase()` vuelve a comprobar seguridad.
-5. Toda transición incompatible pasa por amarillo obligatorio.
-
-La red neuronal nunca controla luces individuales.
-
-## Clingo y geometría
-
-Python no enumera pares de conflicto específicos de una intersección. El preprocesador convierte geometría en hechos neutrales:
-
-```text
-occupies(intersection, lane, destination_branch, zone)
-```
-
-ASP deriva `conflict(...)` cuando movimientos legalmente existentes ocupan una zona incompatible y luego minimiza la cantidad de fases utilizadas.
-
-## Modos multiagente
-
-`rl.agent_architecture` admite:
-
-- `independent`: DQN, replay buffer y target network por intersección.
-- `shared`: una red compartida con padding de estados y máscaras de acción para topologías heterogéneas.
-
-El escenario de ejemplo utiliza `independent`.
-
-## Contrato NestJS ↔ Python
-
-Entrada por `stdin`:
-
-```json
-{
-  "operation": "simulate",
-  "simulationId": "uuid",
-  "parameters": {
-    "scenario": "example_network.yaml",
-    "seconds": 900
-  }
-}
-```
-
-Salida correcta por `stdout`:
-
-```json
-{
-  "success": true,
-  "data": {},
-  "metadata": {}
-}
-```
-
-Los logs se escriben a `stderr`. NestJS mantiene una allowlist de operaciones y usa `spawn()` con argumentos separados.
-
-## Simulación DQN continua para la demo de dos cruces
-
-La demo interactiva incorpora una segunda modalidad de ejecución además de los jobs finitos.
+## Flujo general
 
 ```text
 React
-  │ POST /api/traffic/live
-  ▼
-TrafficController
-  ▼
-TrafficLiveService
-  ▼
-PythonProcessService.startLiveSimulation()
-  ▼
-live_simulation.py
-  │
-  ├─ carga escenario
-  ├─ ejecuta Clingo
-  ├─ carga checkpoint DQN
-  ├─ crea MultiAgentTrafficEnv
-  ├─ selecciona acciones DQN
-  ├─ aplica action masking + SignalController
-  ├─ emite frame NDJSON
-  └─ al terminar ciclo: nueva semilla y reset
+  ↓ HTTP
+NestJS
+  ↓ spawn
+bridge.py / live_simulation.py
+  ↓
+ScenarioLoader
+  ↓
+ClingoTopologyEngine
+  ↓
+IntersectionLogic[]
+  ↓
+MultiAgentTrafficEnv
+  ├─ RoadLane
+  ├─ Gipps
+  ├─ SignalController
+  ├─ buses/paraderos/headway
+  ├─ cámaras
+  ├─ vecinos
+  └─ reward
+  ↓
+AgentGroup
+  └─ DQNAgent por intersección
 ```
 
-`TrafficLiveService` mantiene únicamente el último snapshot, métricas recientes y una ventana corta de decisiones. No acumula la simulación completa en memoria.
+## Reloj de simulación
 
-El proceso termina mediante `SIGTERM` cuando React solicita `POST /api/traffic/live/:sessionId/stop`.
-
-### Archivo Clingo desde frontend
-
-El texto `.lp` se transporta dentro del contrato JSON como `clingoProgram` y se añade a `rules.lp`. Antes de llegar a Clingo se valida tamaño y se bloquean `#script` y `#include`. Por tanto el navegador no entrega rutas de archivos al backend y NestJS no ejecuta comandos construidos por el usuario.
-
-### Semáforos visuales
-
-Python expone por intersección:
-
-```json
-{
-  "phaseIndex": 0,
-  "selectedPhase": 1,
-  "mode": "YELLOW",
-  "branchSignals": {
-    "north": "RED",
-    "east": "YELLOW",
-    "south": "RED",
-    "west": "YELLOW"
-  }
-}
-```
-
-React únicamente representa este estado. No calcula legalidad ni decide colores por su cuenta.
-
-## Simulación live en tiempo real
-
-La ruta live separa dos escalas temporales:
+Parámetros por defecto:
 
 ```text
-DQN decision_interval_s = 5,0 s
-            ↓
-begin_decision(action)
-            ↓
-25 × advance_micro_step(dt=0,2 s)
-            ↓
-finish_decision()
+physical dt        = 0,2 s
+decision interval  = 5,0 s
+substeps/decision  = 25
 ```
 
-Cada `advance_micro_step` produce un snapshot real. `live_simulation.py` sincroniza ese reloj con `time.monotonic()`; a `realTimeFactor=1`, `0,2 s` simulados se presentan aproximadamente cada `0,2 s` reales.
+`MultiAgentTrafficEnv.step(actions, on_substep)` ejecuta exactamente esos 25 subpasos.
 
-El transporte hacia React utiliza SSE:
+Pseudo-flujo:
+
+```python
+for substep in range(25):
+    if substep == 0:
+        signal_controller.request(action)
+
+    signal_controller.step(0.2)
+    update_vehicles_gipps(0.2)
+    update_intersection_transits(0.2)
+    update_buses_and_stops(0.2)
+    update_perception(0.2)
+
+    on_substep(env)
+```
+
+Esto replica deliberadamente el patrón del proyecto de referencia proporcionado por el equipo.
+
+## Entrenamiento
+
+`backend/src/ia/entrenamiento/train.py`:
+
+1. crea `MultiAgentTrafficEnv`;
+2. crea un `DQNAgent` por intersección;
+3. obtiene observaciones;
+4. solicita una acción enmascarada;
+5. llama `env.step(actions)`;
+6. almacena transición;
+7. ejecuta replay/optimización;
+8. actualiza target network;
+9. guarda checkpoints.
+
+No existe un `TrainingEnvironment` alternativo.
+
+## Simulación live
+
+`backend/src/ia/scripts/live_simulation.py`:
+
+1. crea el mismo `MultiAgentTrafficEnv`;
+2. carga los checkpoints `i1.pt`, `i2.pt`, ...;
+3. selecciona acciones greedy;
+4. llama `env.step(actions, on_substep=emit_frame)`;
+5. serializa el estado real cada 0,2 s;
+6. duerme solo lo necesario para sincronizar el ritmo visual;
+7. repite hasta `SIGTERM`.
+
+NestJS no interpola física. Solo retransmite NDJSON → SSE.
+
+## Visualización
+
+`frontend/src/visualization/NetworkVisualization.jsx` dibuja en Canvas.
+
+Datos de posición enviados por Python:
 
 ```text
-Python NDJSON stdout
-      ↓
-PythonProcessService
-      ↓
-TrafficLiveService
-      ↓
-GET /api/traffic/live/:sessionId/stream
-      ↓  text/event-stream
-EventSource (React)
-      ↓
-NetworkVisualization
+vehicle.x
+vehicle.y
+vehicle.headingDeg
+vehicle.lengthM
+vehicle.widthM
 ```
 
-El stream no modifica la lógica científica: NestJS solo retransmite telemetría y el frontend únicamente dibuja el estado recibido.
+Los cabezales semafóricos enviados por Python incluyen:
+
+```text
+branch
+x
+y
+headingDeg
+color
+```
+
+Canvas puede interpolar visualmente entre dos frames verdaderos para suavizar movimiento, pero no cambia velocidad, carril, semáforo ni decisiones.
+
+## Topología y Clingo
+
+`backend/src/ia/clingo/asp_engine.py` transforma el escenario en hechos ASP y ejecuta `rules.lp`.
+
+Clingo produce para cada intersección:
+
+- movimientos;
+- conflictos;
+- fases.
+
+`SignalController` recibe `IntersectionLogic` y solo permite índices de esas fases.
+
+La red neuronal no enciende luces directamente.
+
+## Control semafórico
+
+`SignalController` posee dos responsabilidades:
+
+1. traducir una solicitud de fase a una transición temporal segura;
+2. generar el action mask válido.
+
+Estados visibles:
+
+```text
+GREEN
+YELLOW
+```
+
+En `YELLOW`, ninguna nueva aproximación recibe verde. Al terminar el amarillo se activa la fase pendiente.
+
+## Física
+
+`backend/src/simulacion/vehiculos/gipps.py` contiene la dinámica longitudinal.
+
+Una línea de detención en rojo/amarillo se entrega a Gipps como una restricción de parada. Así la cola se forma mediante la misma dinámica utilizada para seguir a otro vehículo.
+
+`RoadLane` mantiene orden longitudinal y espacio de generación/salida.
+
+Los vehículos que cruzan una intersección pasan temporalmente a `IntersectionTransit`; no son teletransportados entre links.
+
+## Estado del agente
+
+Cada agente recibe un vector de tamaño fijo para el escenario actual:
+
+- cámaras de sus cuatro aproximaciones;
+- resumen GPS de buses;
+- resumen de una intersección vecina.
+
+El frontend nunca construye ese vector.
+
+## DQN
+
+`backend/src/ia/modelos/dqn.py`:
+
+```text
+input
+ ↓
+Linear(128) + ReLU
+ ↓
+Linear(128) + ReLU
+ ↓
+Q(action_0 ... action_n)
+```
+
+Incluye:
+
+- replay buffer;
+- epsilon-greedy;
+- target network;
+- Huber;
+- Adam;
+- gradient clipping;
+- action masking.
+
+`AgentGroup` mantiene un agente independiente por intersección para evitar asumir que todas tienen el mismo espacio de acciones.
+
+## Seguridad de intersección
+
+Antes de permitir una nueva entrada se verifican dos niveles:
+
+1. el movimiento pertenece a la fase verde autorizada por Clingo;
+2. no existe un `IntersectionTransit` conflictivo todavía ocupando la caja.
+
+Además se exige espacio en el link de salida.
+
+## Carpetas relevantes
+
+```text
+backend/src/ia/clingo/               ASP y solver
+backend/src/ia/modelos/              DQN + AgentGroup
+backend/src/ia/entrenamiento/        train/evaluate
+backend/src/ia/scripts/              bridge/live
+backend/src/simulacion/trafico/      Environment + lanes + signals
+backend/src/simulacion/vehiculos/    Gipps
+backend/src/simulacion/percepcion/   cámaras
+backend/src/simulacion/rutas/        RoutePlanner
+backend/src/simulacion/metricas/     métricas
+backend/src/simulacion/telemetria/   DTO visual
+frontend/src/visualization/          Canvas sin física
+```
+
+## Alcance del escenario estable actual
+
+El escenario de demo usa dos cruces conectados y una pista por sentido con movimientos rectos. Esta simplificación es **del archivo de escenario**, no del ciclo temporal ni del DQN.
+
+La prioridad de esta reconstrucción es que las invariantes físicas, el entrenamiento y la reproducción live sean verificables antes de aumentar la complejidad geométrica.

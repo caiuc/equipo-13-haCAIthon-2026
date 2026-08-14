@@ -9,34 +9,27 @@ from simulacion.telemetria.snapshot import build_network_snapshot
 from simulacion.trafico.multi_agent_environment import MultiAgentTrafficEnv
 
 
-def evaluate(cfg: dict, logic: dict, seconds: float, checkpoints: str | Path | None = None, metrics_path: str | Path | None = None, max_frames: int = 140):
-    env = MultiAgentTrafficEnv(cfg, logic, seconds)
-    obs = env.reset()
+def evaluate(cfg: dict, logic: dict, seconds: float, checkpoints: str | Path | None = None, max_frames: int = 120):
+    env = MultiAgentTrafficEnv(cfg, logic, episode_seconds=seconds)
+    observations = env.reset()
     group = None
     if checkpoints:
         candidate = AgentGroup(env, logic, cfg, seed=100)
-        if candidate.load(checkpoints):
-            group = candidate
+        if not candidate.load(checkpoints):
+            raise FileNotFoundError("Checkpoint incompleto")
+        group = candidate
 
-    collector = MetricsCollector(cfg)
-    total_steps = max(1, math.ceil(float(seconds) / env.decision_interval))
-    capture_every = max(1, math.ceil(total_steps / max(1, max_frames)))
+    total_decisions = max(1, math.ceil(seconds / env.decision_interval_s))
+    capture_every = max(1, math.ceil(total_decisions / max_frames))
     timeline = [build_network_snapshot(cfg, env)]
-
     done = False
-    step_index = 0
+    decision = 0
     while not done:
-        actions = group.select_actions(obs, env.action_masks(), training=False) if group else env.heuristic_actions()
-        obs, rewards, done, _ = env.step(actions)
-        collector.sample(env, rewards)
-        step_index += 1
-        if step_index % capture_every == 0 or done:
+        masks = env.action_masks()
+        actions = group.select_actions(observations, masks, training=False) if group else env.heuristic_actions()
+        observations, _, done, _ = env.step(actions)
+        decision += 1
+        if decision % capture_every == 0 or done:
             timeline.append(build_network_snapshot(cfg, env))
 
-    if not timeline or timeline[-1]["timeS"] != env.network.time_s:
-        timeline.append(build_network_snapshot(cfg, env))
-
-    summary = collector.summarize(env)
-    if metrics_path:
-        collector.write_json(env, metrics_path)
-    return env, summary, timeline
+    return env, MetricsCollector(cfg).summarize(env), timeline

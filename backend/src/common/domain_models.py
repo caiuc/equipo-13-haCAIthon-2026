@@ -10,9 +10,10 @@ class VehicleKind(str, Enum):
     BUS = "BUS"
 
 
-class SignalMode(str, Enum):
+class SignalColor(str, Enum):
     GREEN = "GREEN"
     YELLOW = "YELLOW"
+    RED = "RED"
 
 
 class BusStatus(str, Enum):
@@ -54,15 +55,17 @@ class IntersectionLogic:
 class Vehicle:
     id: str
     kind: VehicleKind
-    route_id: str | None
     route_links: list[str]
+    route_id: str | None = None
     link_index: int = 0
     position_m: float = 0.0
     speed_mps: float = 0.0
     desired_speed_mps: float = 13.9
     length_m: float = 4.5
+    width_m: float = 1.8
     max_accel: float = 2.0
     comfortable_decel: float = 3.0
+    safe_gap_m: float = 5.0
     reaction_time_s: float = 1.0
     created_at_s: float = 0.0
     waiting_time_s: float = 0.0
@@ -88,11 +91,25 @@ class Bus(Vehicle):
 
 
 @dataclass
+class IntersectionTransit:
+    vehicle: Vehicle
+    intersection_id: str
+    from_link: str
+    to_link: str
+    movement_key: str
+    elapsed_s: float = 0.0
+    duration_s: float = 1.6
+
+    @property
+    def progress(self) -> float:
+        return min(max(self.elapsed_s / max(self.duration_s, 1e-6), 0.0), 1.0)
+
+
+@dataclass
 class NeighborMessage:
     sender_id: str
     timestamp_s: float
     congestion: float
-    congested_movements: list[str]
     current_phase: int
-    upcoming_buses: list[dict[str, Any]]
-    critical_events: list[str]
+    nearest_bus_eta_s: float | None
+    critical_bus: bool

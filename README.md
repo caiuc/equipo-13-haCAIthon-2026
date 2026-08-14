@@ -1,58 +1,234 @@
 # Equipo 13 haCAIthon 2026 — Control semafórico multiagente
 
-Demo de control semafórico adaptativo para **dos intersecciones de cuatro vías conectadas**, orientada prioritariamente a buses, regularidad de headway y prevención de **bus bunching**.
+Sistema de simulación microscópica y control semafórico adaptativo orientado a transporte público, reconstruido usando como referencia técnica el patrón de ejecución del proyecto `Empresa.zip` proporcionado por el equipo.
 
-La aplicación integra React + Vite, NestJS, Python, Clingo/ASP y DQN multiagente.
+La decisión principal de esta versión es simple: **existe un solo entorno de simulación**. Ese mismo entorno se usa para entrenar, evaluar y visualizar. React no calcula física y NestJS no reproduce una segunda simulación.
 
-## Flujo principal de la demo
+## Qué demuestra esta versión
 
-La interfaz está pensada para funcionar en tres pasos:
+El escenario incluido contiene **dos intersecciones de cuatro vías conectadas por una avenida**. Cada calle bidireccional tiene una pista por sentido, por lo que visualmente se observan las dos pistas de cada calzada.
 
-1. **Clingo** — cargar opcionalmente un archivo `.lp` y validar movimientos, conflictos y fases legales.
-2. **Entrenar DQN** — elegir cantidad de episodios y segundos simulados por episodio.
-3. **Simulación DQN continua en tiempo real** — cargar automáticamente el checkpoint recién entrenado y observar decisiones, semáforos y vehículos hasta pulsar `Detener simulación`.
+Se muestran en tiempo real:
 
-La simulación continua ejecuta Python realmente. El motor avanza con `dt=0,2 s`; a velocidad `1×`, cada micro-paso se sincroniza con el reloj real y se transmite inmediatamente al navegador mediante **Server-Sent Events (SSE)**. El DQN sigue tomando decisiones cada `5 s` simulados, igual que durante el entrenamiento. Al terminar cada ciclo de tráfico reinicia el entorno con una semilla diferente, mantiene el mismo checkpoint entrenado y continúa indefinidamente.
+- autos;
+- buses B1 y B2;
+- cuatro cabezales semafóricos por intersección, ocho en total;
+- rojo, amarillo y verde;
+- líneas de detención;
+- colas en rojo;
+- movimientos dentro de la caja de conflicto;
+- paraderos y detenciones de buses;
+- fase solicitada por cada DQN;
+- fase realmente aplicada por el controlador;
+- recompensas, headway y métricas básicas.
 
-## Qué se visualiza
+La primera versión estable del escenario demo utiliza movimientos rectos. El motor de configuración y Clingo permanece separado del escenario para poder incorporar giros y más carriles posteriormente sin crear un segundo motor de simulación.
 
-- Dos cruces de cuatro vías conectados por una avenida principal.
-- Dos pistas por sentido.
-- Cuatro cabezales semafóricos visibles por cruce (8 en total).
-- Rojo, amarillo y verde de cada aproximación actualizados frame a frame; un amarillo de 3 s permanece visible durante aproximadamente 15 frames a `dt=0,2 s`.
-- Fase solicitada por el DQN y fase actualmente aplicada.
-- Transición amarilla obligatoria antes de cambiar a una fase incompatible.
-- Autos y buses orientados en su sentido de circulación.
-- Recorridos B1 y B2 en sentidos opuestos.
-- Paraderos.
-- Movimientos activos dentro del cruce.
-- Headway, estado de buses, recompensas y últimas decisiones DQN.
+## Arquitectura temporal — el punto más importante
 
-## Seguridad al cargar Clingo
-
-El archivo `.lp` seleccionado desde el navegador se **agrega** al núcleo `backend/src/ia/clingo/rules.lp`.
-
-Se permiten reglas, hechos, restricciones y optimizaciones ASP normales. Por seguridad:
-
-- máximo 200 KB;
-- `#script` está bloqueado;
-- `#include` está bloqueado.
-
-Esto evita ejecutar código embebido o leer archivos arbitrarios del servidor.
-
-Se incluye un ejemplo en:
+La simulación replica el patrón que funciona en el proyecto de referencia:
 
 ```text
-backend/src/ia/clingo/demo_two_crosses.lp
+DQN
+ │
+ │ una decisión cada 5 s simulados
+ ▼
+MultiAgentTrafficEnv.step(actions)
+ │
+ ├─ subpaso físico 0,2 s
+ ├─ subpaso físico 0,2 s
+ ├─ ...
+ └─ 25 subpasos = 5 s
+      │
+      └─ on_substep(env) después de CADA subpaso
 ```
 
-## Requisitos
+El `on_substep` recibe el estado del mismo entorno que está ejecutando Gipps, buses y semáforos. En live:
 
-- Node.js 20+
-- npm 10+
-- Python 3.11+
+```text
+Python on_substep
+      ↓ NDJSON
+NestJS
+      ↓ SSE
+React Canvas
+```
 
-## Instalación Python
+React solamente dibuja las coordenadas, orientaciones y colores que Python entrega.
+
+## Entrenamiento y simulación usan exactamente el mismo entorno
+
+Entrenamiento:
+
+```text
+MultiAgentTrafficEnv
+       ↓
+DQN observa estado
+       ↓
+action mask
+       ↓
+DQN solicita fase
+       ↓
+env.step()
+       ↓
+recompensa
+       ↓
+Replay Buffer / Huber / Adam / Target Network
+```
+
+Simulación en vivo:
+
+```text
+MultiAgentTrafficEnv
+       ↓
+checkpoint DQN
+       ↓
+action mask
+       ↓
+DQN solicita fase
+       ↓
+env.step(on_substep=stream)
+       ↓
+SSE
+       ↓
+Canvas
+```
+
+No existe una física específica para el frontend.
+
+## Semáforos
+
+Cada intersección posee cuatro aproximaciones:
+
+```text
+N
+E
+S
+O
+```
+
+Cada una se visualiza con un cabezal de tres luces. El DQN **no controla luces individuales**. Solo solicita un índice de fase generado por Clingo.
+
+El controlador temporal aplica:
+
+- verde mínimo;
+- amarillo obligatorio antes de una fase incompatible;
+- rojo;
+- máximo de rojo;
+- action masking.
+
+Por ejemplo:
+
+```text
+DQN pide fase E/O
+       ↓
+fase N/S todavía verde si no cumplió mínimo
+       ↓
+amarillo N/S
+       ↓
+rojo N/S
+       ↓
+verde E/O
+```
+
+## Vehículos y leyes de tránsito
+
+La posición de un vehículo representa su parachoques delantero.
+
+El motor usa dinámica de Gipps y trata la línea de detención como un obstáculo cuando el movimiento no está habilitado. Esto permite que las colas se formen físicamente antes del cruce.
+
+También se comprueba:
+
+- separación mínima entre vehículos;
+- no solapamiento por carril;
+- no entrar con rojo;
+- no iniciar entrada con amarillo;
+- derecho a despejar la caja si ya se entró legalmente;
+- exclusión de trayectorias conflictivas dentro de la caja;
+- espacio de salida antes de autorizar una nueva entrada.
+
+## Buses
+
+Los buses son una clase distinta de los autos. El escenario incluye dos recorridos opuestos:
+
+```text
+B1  oeste → i1 → i2 → este
+B2  este  → i2 → i1 → oeste
+```
+
+Se modelan:
+
+- despacho por headway;
+- paraderos;
+- dwell estocástico;
+- posición conocida tipo GPS;
+- headway estimado;
+- estados normal / adelantado / atrasado / riesgo / crítico;
+- penalización de bunching en la recompensa.
+
+## DQN
+
+Cada intersección tiene su propio agente independiente.
+
+Configuración base:
+
+- MLP 128 → 128;
+- ReLU;
+- replay buffer;
+- epsilon-greedy;
+- target network;
+- Huber Loss (`SmoothL1Loss`);
+- Adam;
+- gradient clipping;
+- action masking.
+
+Los checkpoints se guardan en:
+
+```text
+backend/outputs/model_runs/<run-id>/
+├── i1.pt
+├── i2.pt
+├── agents.json
+├── training_history.json
+└── manifest.json
+```
+
+## Clingo
+
+Clingo determina movimientos, conflictos y fases legales antes de construir el entorno.
+
+El flujo de seguridad es:
+
+```text
+Escenario YAML
+      ↓
+Clingo
+      ↓
+fases legales
+      ↓
+action mask
+      ↓
+DQN
+      ↓
+SignalController
+      ↓
+simulación
+```
+
+Se puede agregar un `.lp` desde la interfaz. Por seguridad se bloquean `#script` y `#include` y se limita su tamaño.
+
+## Flujo de la interfaz
+
+La demo se centra en tres pasos:
+
+1. **Validar Clingo**.
+2. **Entrenar DQN** indicando episodios y segundos por episodio.
+3. **Iniciar simulación en tiempo real** con el checkpoint generado.
+
+La simulación live continúa hasta pulsar **Detener simulación**. Al completar un ciclo reinicia el tráfico con otra semilla, pero conserva el mismo checkpoint.
+
+## Instalación
+
+### Python
 
 ```bash
 cd backend
@@ -63,21 +239,27 @@ python -m pip install -r requirements.txt
 cd ..
 ```
 
-## Instalación Node
+### Node
 
 ```bash
 npm install
 ```
 
-## Levantar aplicación
+### Variables de entorno
 
-Desde la raíz, manteniendo el entorno virtual activo:
+```bash
+cp backend/.env.example backend/.env
+```
+
+## Ejecutar
+
+Mantén activo el entorno virtual Python y, desde la raíz:
 
 ```bash
 npm run dev
 ```
 
-Luego abre:
+Abre:
 
 ```text
 http://localhost:5173
@@ -89,77 +271,27 @@ Backend:
 http://localhost:3000
 ```
 
-## Prueba rápida recomendada
+## Prueba rápida
 
-En la interfaz:
+Para comprobar el flujo completo:
 
 ```text
-Clingo:       rules.lp interno o demo_two_crosses.lp
-Episodios:    3
-Por episodio: 120 segundos
-Ciclo live:   600 segundos
-Ritmo:        1× · tiempo real
+Episodios:             3
+Segundos por episodio: 120
+Ritmo live:            1×
 ```
 
-Flujo:
+Luego:
 
 ```text
-Validar topología Clingo
-        ↓
+Validar Clingo
+     ↓
 Entrenar DQN
-        ↓
-Iniciar simulación con el modelo entrenado
-        ↓
-Observar fases, rojo/amarillo/verde, autos y buses
-        ↓
-Detener simulación cuando quieras
+     ↓
+Iniciar simulación
 ```
 
-Para un entrenamiento más representativo:
-
-```text
-10 episodios × 300 s   → demo
-50 episodios × 900 s   → entrenamiento más serio
-```
-
-## API
-
-```text
-GET  /api/traffic/scenarios
-POST /api/traffic/topology
-POST /api/traffic/simulations
-POST /api/traffic/training
-POST /api/traffic/evaluations
-GET  /api/traffic/jobs/:jobId
-GET  /api/traffic/jobs/:jobId/results
-
-POST /api/traffic/live
-GET  /api/traffic/live/:sessionId
-GET  /api/traffic/live/:sessionId/stream   # SSE en tiempo real
-POST /api/traffic/live/:sessionId/stop
-```
-
-Los entrenamientos son jobs finitos. La simulación `live` mantiene un proceso Python activo hasta detenerlo.
-
-## Separación de seguridad
-
-```text
-Clingo
-  ↓
-fases legalmente posibles
-  ↓
-action masking
-  ↓
-DQN selecciona fase
-  ↓
-controlador temporal
-  ↓
-verde mínimo / amarillo obligatorio / rojo máximo
-  ↓
-simulador microscópico
-```
-
-El DQN nunca produce directamente una combinación arbitraria de luces.
+Para una prueba de aprendizaje más representativa, aumenta episodios y duración.
 
 ## Tests
 
@@ -169,16 +301,42 @@ source .venv/bin/activate
 pytest -q
 ```
 
-Los checkpoints se guardan en:
+Los tests cubren específicamente:
+
+- 25 micro-subpasos de 0,2 s por decisión de 5 s;
+- cambio de posición entre callbacks;
+- buses presentes desde el inicio;
+- línea de detención en rojo;
+- no solapamiento;
+- transición verde → amarillo → nueva fase verde;
+- exclusión de movimientos conflictivos;
+- despacho/headway de buses;
+- entrenamiento DQN;
+- checkpoint guardado y cargable;
+- contrato JSON del bridge.
+
+## API principal
 
 ```text
-backend/outputs/model_runs/<run-id>/
+GET  /api/traffic/scenarios
+POST /api/traffic/topology
+POST /api/traffic/training
+GET  /api/traffic/jobs/:jobId
+GET  /api/traffic/jobs/:jobId/results
+
+POST /api/traffic/live
+GET  /api/traffic/live/:sessionId
+GET  /api/traffic/live/:sessionId/stream
+POST /api/traffic/live/:sessionId/stop
 ```
 
-y están excluidos del repositorio mediante `.gitignore`.
+## Responsabilidades
 
-### Simulación visual en tiempo real
+```text
+React        = interfaz + Canvas
+NestJS       = API + jobs + procesos Python + SSE
+Python       = física + buses + estado + recompensa + DQN
+Clingo       = legalidad de movimientos/conflictos/fases
+```
 
-Al pulsar **Iniciar simulación en tiempo real**, Python avanza el modelo microscópico cada `0.2 s` y NestJS transmite cada frame mediante SSE. React actualiza posiciones y cabezales semafóricos con cada frame. En desarrollo existe un respaldo automático que consulta el último snapshot real cada `250 ms` si el stream SSE queda sin eventos por más de `900 ms`.
-
-El escenario de demostración inicia con tráfico visible desde el primer micro-paso: un auto por origen y un bus B1/B2 desde `t=0`. Los cambios de fase respetan mínimo verde, amarillo obligatorio y máximo de rojo, de modo que la secuencia de colores sea observable durante la demo.
+La regla de esta reconstrucción es que **ninguna de esas capas reimplemente el comportamiento de otra**.

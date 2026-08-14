@@ -1,99 +1,92 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from common.domain_models import IntersectionLogic, SignalMode
-
-
-@dataclass
-class ControllerState:
-    phase_index: int
-    mode: SignalMode
-    elapsed_s: float
-    pending_phase: int | None
+from common.domain_models import IntersectionLogic, SignalColor
 
 
 class SignalController:
+    """Máquina de estados inspirada directamente en TrafficLight de Empresa.zip.
+
+    El agente solicita una FASE, nunca luces individuales. El controlador aplica
+    verde mínimo, amarillo obligatorio y máximo de rojo.
+    """
+
     def __init__(self, logic: IntersectionLogic, min_green_s: float, yellow_s: float, max_red_s: float):
         if not logic.phases:
-            raise ValueError(f'{logic.intersection_id} no posee fases legales')
+            raise ValueError(f"{logic.intersection_id} no posee fases legales")
         self.logic = logic
         self.min_green_s = float(min_green_s)
         self.yellow_s = float(yellow_s)
         self.max_red_s = float(max_red_s)
-        self.phase_index = 0
-        self.mode = SignalMode.GREEN
-        self.elapsed_s = 0.0
+        self.current_phase = 0
         self.pending_phase: int | None = None
-        self.red_elapsed = {m.key: 0.0 for m in logic.movements}
-        self.phase_changes = 0
-        self.restriction_counts = {'yellow_lock':0,'min_green':0,'max_red':0}
+        self.color_state = SignalColor.GREEN
+        self.time_in_color_s = 0.0
+        self.time_in_phase_s = 0.0
+        self.red_timers = {phase.index: 0.0 for phase in logic.phases}
+        self.phase_changed_this_step = False
+        self.last_requested_phase = 0
 
-    def state(self) -> ControllerState:
-        return ControllerState(self.phase_index, self.mode, self.elapsed_s, self.pending_phase)
+    @property
+    def phase_count(self) -> int:
+        return len(self.logic.phases)
 
-    def phase_keys(self, index: int | None = None) -> set[str]:
-        idx = self.phase_index if index is None else index
-        return {m.key for m in self.logic.phases[idx].movements}
+    def legal_action_mask(self) -> list[bool]:
+        mask = [True] * self.phase_count
+        if self.color_state == SignalColor.YELLOW:
+            return [idx == (self.pending_phase if self.pending_phase is not None else self.current_phase)
+                    for idx in range(self.phase_count)]
+        if self.time_in_phase_s < self.min_green_s:
+            return [idx == self.current_phase for idx in range(self.phase_count)]
 
-    def is_green(self, lane_id: str, to_branch: str) -> bool:
-        if self.mode != SignalMode.GREEN:
-            return False
-        return f'{lane_id}->{to_branch}' in self.phase_keys()
-
-    def assert_safe_phase(self, phase_index: int) -> None:
-        keys = list(self.phase_keys(phase_index))
-        for i,a in enumerate(keys):
-            for b in keys[i+1:]:
-                if frozenset((a,b)) in self.logic.conflicts:
-                    raise AssertionError(f'Fase {phase_index} insegura: {a} y {b}')
-
-    def action_mask(self, record_restriction: bool = True) -> list[bool]:
-        n = len(self.logic.phases)
-        if self.mode == SignalMode.YELLOW:
-            if record_restriction:
-                self.restriction_counts['yellow_lock'] += 1
-            # No se acepta una nueva decisión durante la transición.
-            return [i == (self.pending_phase if self.pending_phase is not None else self.phase_index) for i in range(n)]
-        if self.elapsed_s < self.min_green_s:
-            if record_restriction:
-                self.restriction_counts['min_green'] += 1
-            return [i == self.phase_index for i in range(n)]
-
-        overdue = {k for k,t in self.red_elapsed.items() if t >= self.max_red_s}
+        overdue = [idx for idx, value in self.red_timers.items()
+                   if idx != self.current_phase and value >= self.max_red_s]
         if overdue:
-            candidates = [bool(self.phase_keys(i) & overdue) for i in range(n)]
-            if any(candidates):
-                if record_restriction:
-                    self.restriction_counts['max_red'] += 1
-                return candidates
-        return [True] * n
+            return [idx in overdue for idx in range(self.phase_count)]
+        return mask
 
-    def request_phase(self, phase_index: int) -> bool:
-        if not 0 <= phase_index < len(self.logic.phases):
-            return False
-        mask = self.action_mask()
-        if not mask[phase_index]:
-            return False
-        self.assert_safe_phase(phase_index)
-        if phase_index == self.phase_index:
-            return True
-        self.mode = SignalMode.YELLOW
-        self.elapsed_s = 0.0
-        self.pending_phase = phase_index
-        return True
+    def request_is_legal(self, phase_index: int) -> bool:
+        mask = self.legal_action_mask()
+        return 0 <= phase_index < len(mask) and mask[phase_index]
 
-    def tick(self, dt: float) -> None:
-        dt = float(dt)
-        self.elapsed_s += dt
-        if self.mode == SignalMode.YELLOW and self.elapsed_s >= self.yellow_s:
-            assert self.pending_phase is not None
-            self.phase_index = self.pending_phase
-            self.pending_phase = None
-            self.mode = SignalMode.GREEN
-            self.elapsed_s = 0.0
-            self.phase_changes += 1
+    def step(self, requested_phase: int | None, dt_s: float) -> None:
+        self.phase_changed_this_step = False
+        if requested_phase is not None:
+            self.last_requested_phase = int(requested_phase)
 
-        active = self.phase_keys() if self.mode == SignalMode.GREEN else set()
-        for key in self.red_elapsed:
-            self.red_elapsed[key] = 0.0 if key in active else self.red_elapsed[key] + dt
+        if self.color_state == SignalColor.YELLOW:
+            self.time_in_color_s += dt_s
+            if self.time_in_color_s + 1e-9 >= self.yellow_s:
+                self.current_phase = self.pending_phase if self.pending_phase is not None else self.current_phase
+                self.pending_phase = None
+                self.color_state = SignalColor.GREEN
+                self.time_in_color_s = 0.0
+                self.time_in_phase_s = 0.0
+        else:
+            selected = self.current_phase if requested_phase is None else int(requested_phase)
+            if selected != self.current_phase and self.request_is_legal(selected):
+                self.pending_phase = selected
+                self.color_state = SignalColor.YELLOW
+                self.time_in_color_s = 0.0
+                self.phase_changed_this_step = True
+            else:
+                self.time_in_color_s += dt_s
+                self.time_in_phase_s += dt_s
+
+        for idx in self.red_timers:
+            if idx == self.current_phase and self.color_state == SignalColor.GREEN:
+                self.red_timers[idx] = 0.0
+            else:
+                self.red_timers[idx] += dt_s
+
+    def movement_color(self, movement_key: str) -> SignalColor:
+        active = {m.key for m in self.logic.phases[self.current_phase].movements}
+        if movement_key not in active:
+            return SignalColor.RED
+        return self.color_state
+
+    def branch_color(self, branch: str) -> SignalColor:
+        phase = self.logic.phases[self.current_phase]
+        active_from_branch = any(m.from_branch == branch for m in phase.movements)
+        if not active_from_branch:
+            return SignalColor.RED
+        return self.color_state
