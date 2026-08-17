@@ -1,0 +1,29 @@
+{
+  "name": "MicroFlow · HaCAithon 2026",
+  "image": "mcr.microsoft.com/devcontainers/universal:2-linux",
+  "forwardPorts": [
+    5173,
+    3000
+  ],
+  "portsAttributes": {
+    "5173": {
+      "label": "Aplicación",
+      "onAutoForward": "openPreview"
+    },
+    "3000": {
+      "label": "Servicio 3000",
+      "onAutoForward": "silent"
+    }
+  },
+  "postAttachCommand": {
+    "app": "npm run dev"
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": [
+        "README.md"
+      ]
+    }
+  },
+  "postCreateCommand": "bash -lc 'npm install; pip install -r backend/requirements.txt'"
+}
