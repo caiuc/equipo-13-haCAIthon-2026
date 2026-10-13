@@ -15,6 +15,6 @@
     "check:python": "npm run python:compile --workspace=backend"
   },
   "devDependencies": {
-    "concurrently": "^9.2.0"
+    "concurrently": "^9.2.5"
   }
 }
